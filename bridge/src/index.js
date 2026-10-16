@@ -101,6 +101,15 @@ async function onFinalReading(msg) {
   } else {
     log(`trade ${trade.id}: unexpected result ${link(r.txHash)}`);
   }
-  const t = await escrow.trades(trade.id);
-  log(`trade ${trade.id} status on-chain: ${STATUS[Number(t.status)]}, total delivered so far: ${await escrow.totalDeliveredWh()} Wh`);
+
+  // Public RPC nodes can lag a block behind: retry briefly until the new state is visible.
+  for (let i = 0; i < 5; i++) {
+    const t = await escrow.trades(trade.id);
+    if (STATUS[Number(t.status)] !== 'Open') {
+      log(`trade ${trade.id} status on-chain: ${STATUS[Number(t.status)]}, total delivered so far: ${await escrow.totalDeliveredWh()} Wh`);
+      return;
+    }
+    await new Promise((res) => setTimeout(res, 1000));
+  }
+  log(`trade ${trade.id}: the RPC node has not caught up yet; check the explorer link above`);
 }
