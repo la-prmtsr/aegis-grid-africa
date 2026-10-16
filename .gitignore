@@ -1,0 +1,21 @@
+# secrets
+.env
+.env.*
+!.env.example
+
+# node
+node_modules/
+
+# foundry
+contracts/out/
+contracts/cache/
+contracts/broadcast/*/31337/
+contracts/broadcast/**/dry-run/
+
+# firmware host test
+firmware/test/ext/
+firmware/test/build/
+
+# os / editors
+.DS_Store
+Thumbs.db
