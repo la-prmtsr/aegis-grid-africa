@@ -49,6 +49,20 @@ On-chain counter `totalDeliveredWh` after these trades: **206 Wh** (161 + 45). T
 
 The contract pays for the energy the **buyer's** meter received; cable loss is the seller's cost. Shares plus refund equal the 500 gwei deposit in both trades.
 
+### The seller withdraws (pull payment)
+
+Settlement only credits balances inside the contract; each party withdraws its own balance with `withdraw()`.
+
+| Step | Value |
+|---|---|
+| Seller balance in the contract before | 170,980,000,000 wei (trade 1 + trade 3 shares) |
+| `withdraw()` by the seller | [tx `0x88579b65…64cb`](https://base-sepolia.blockscout.com/tx/0x88579b659b29512f7a494cb4a2a554ef5b354abecc38a895132ab75aec3264cb), event `Withdrawn(seller, 170980000000)` |
+| Seller balance in the contract after | 0 |
+| Second `withdraw()` attempt | Reverted with `NothingToWithdraw` (no double payout) |
+| Seller wallet balance afterwards | 99,567,025,999,785 wei = 100,000,000,000,000 funding − 409,464,000,111 (`registerMeter` fee) + 170,980,000,000 (earnings) − 194,490,000,104 (`withdraw` fee) |
+
+With the deliberately tiny demo price (1 gwei per Wh) the earnings are about the size of one withdrawal fee. At real electricity prices the earnings dominate, and because balances accumulate across trades, a seller can withdraw rarely.
+
 ### Why the tampered trade is frozen, not refunded
 
 If any mismatch refunded the buyer automatically, a buyer could tamper with its own meter to get energy for free. Freezing the deposit removes that incentive. The arbiter (the contract owner in this prototype) can call `resolveDispute`; if nobody does, the buyer can call `refundExpired` once the trade has expired and the 7-day dispute window has passed. A single-owner arbiter is a prototype simplification; production needs staking and slashing, a multisig or a decentralised oracle.
@@ -63,5 +77,6 @@ If any mismatch refunded the buyer automatically, a buyer could tamper with its 
 | `settleTrade`, settled (trade 1) | 183,982 | 1,103,892,000,270 |
 | `settleTrade`, settled (trade 3) | 98,494 | 590,964,000,290 |
 | `settleTrade`, disputed (trade 2) | 57,716 | 346,296,000,292 |
+| `withdraw` | 32,415 | 194,490,000,104 |
 
 Fees are testnet amounts at a gas price of about 0.006 gwei, including the Layer-1 data fee. A dollar figure on mainnet depends on that day's gas price and ETH price, so we report gas units and testnet fees only. The second settlement uses less gas than the first because the recipients' balance slots were already non-zero.
