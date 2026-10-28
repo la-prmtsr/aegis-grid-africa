@@ -21,6 +21,8 @@ const MOCK_CONTROL = {
   WOKWI_CTRL_BUYER_TOPIC: 'buyer_request', WOKWI_CTRL_BUYER_ON: '{"buyer_request":true}', WOKWI_CTRL_BUYER_OFF: '{"buyer_request":false}',
   WOKWI_CTRL_OUTAGE_TOPIC: 'grid', WOKWI_CTRL_OUTAGE_ON: '{"grid_status":"OUTAGE"}', WOKWI_CTRL_OUTAGE_OFF: '{"grid_status":"AVAILABLE"}',
   WOKWI_CTRL_BACKUP_TOPIC: 'backup', WOKWI_CTRL_BACKUP_ON: '{"emergency_backup_allowed":true}', WOKWI_CTRL_BACKUP_OFF: '{"emergency_backup_allowed":false}',
+  WOKWI_CTRL_PV_TOPIC: 'pv', WOKWI_CTRL_PV_VALUE: '{"pv_power_w":{value}}',
+  WOKWI_CTRL_LOAD_TOPIC: 'load', WOKWI_CTRL_LOAD_VALUE: '{"local_load_w":{value}}',
 };
 
 function envFor(allowedKeys) {

@@ -168,3 +168,25 @@ test('time-scale estimator recognises an accelerated battery model', () => {
   }
   assert.ok(Math.abs(a.timeScaleEstimate() - 60) < 1, String(a.timeScaleEstimate()));
 });
+
+// ------------------------------------------------------------------ Control room additions
+import { controlMessage } from '../src/v2/control.js';
+
+test('Wokwi control: switches use ON/OFF payloads, setpoints fill {value} in watts', () => {
+  const sw = { topic: 'grid', on: '{"grid_status":"OUTAGE"}', off: '{"grid_status":"AVAILABLE"}', value: '' };
+  assert.deepEqual(controlMessage(sw, true), { sub: 'grid', payload: '{"grid_status":"OUTAGE"}' });
+  assert.deepEqual(controlMessage(sw, false), { sub: 'grid', payload: '{"grid_status":"AVAILABLE"}' });
+  const pv = { topic: 'pv', on: '', off: '', value: '{"pv_power_w":{value}}' };
+  assert.deepEqual(controlMessage(pv, 649.6), { sub: 'pv', payload: '{"pv_power_w":650}' });
+  assert.equal(controlMessage(pv, -5), null);
+  assert.equal(controlMessage(pv, true), null); // a setpoint is not a switch
+  assert.equal(controlMessage({ topic: '', on: 'x', off: 'y', value: '' }, true), null); // not configured
+});
+
+test('Meter A reports which simulator produced the data and the total demand', () => {
+  const a = new MeterAGateway({ sim: SIM });
+  assert.equal(a.onWokwi(wokwi(), 0).telemetry.source, 'wokwi');
+  const m = a.onWokwi({ ...wokwi(), sim_source: 'MOCK' }, 1000).telemetry;
+  assert.equal(m.source, 'mock');
+  assert.equal(m.totalDemandW, 550);
+});

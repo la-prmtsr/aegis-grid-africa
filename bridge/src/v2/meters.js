@@ -131,8 +131,10 @@ export class MeterAGateway {
       tradeWh: tr ? r1(tr.wh) : 0,
       exportWhTotal: Math.floor(this.exportWhTotal),
       status,
+      source: raw.sim_source === 'MOCK' ? 'mock' : 'wokwi', // which simulator produced this message
       // Stage 4E details
       buyerRequest: t.buyerRequest,
+      totalDemandW: r1(t.demandW),
       buyerDemandW: r1(t.buyerDemandW),
       backupAllowed: t.backupAllowed,
       unservedW: r1(t.unservedW),

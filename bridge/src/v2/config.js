@@ -66,12 +66,16 @@ export const TRADE = {
 
 // Commands to Faras's Wokwi in REMOTE mode. Leave a topic empty until the format is confirmed:
 // the backend then only logs what it would send. Topics are relative to <ROOT>/demo/control/.
+// Switches use _ON/_OFF payloads; setpoints (PV, LOAD) use a _VALUE template with {value} in watts.
 const ctrl = (key) => ({
   topic: env[`WOKWI_CTRL_${key}_TOPIC`] || '',
   on: env[`WOKWI_CTRL_${key}_ON`] || '',
   off: env[`WOKWI_CTRL_${key}_OFF`] || '',
+  value: env[`WOKWI_CTRL_${key}_VALUE`] || '',
 });
-export const WOKWI_CONTROL = { buyer: ctrl('BUYER'), outage: ctrl('OUTAGE'), backup: ctrl('BACKUP') };
+export const WOKWI_CONTROL = {
+  buyer: ctrl('BUYER'), outage: ctrl('OUTAGE'), backup: ctrl('BACKUP'), pv: ctrl('PV'), load: ctrl('LOAD'),
+};
 
 // Chain settings are read lazily, so the monitoring parts run without a wallet.
 export const chain = {

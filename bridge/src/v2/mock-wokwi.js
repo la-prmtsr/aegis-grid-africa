@@ -4,8 +4,10 @@
 // 5% battery reserve. NEVER run it at the same time as the real Wokwi on the same broker.
 //
 // Keys: d day/night · o outage · r buyer button · b emergency backup · + / - shop load · q quit
-// It also obeys aegis-grid/<site>/demo/control/# (any JSON with buyer_request, grid_status or
-// emergency_backup_allowed) and the dashboard's app/demo topic (pvW, shopLoadW, communityLoadW, outage, backup).
+// It also obeys aegis-grid/<site>/demo/control/# (any JSON with buyer_request, grid_status,
+// emergency_backup_allowed, pv_power_w or local_load_w) and the dashboard's app/demo topic
+// (pvW, shopLoadW, communityLoadW, outage, backup, engine). engine "wokwi" pauses the mock so the real
+// Wokwi is the only source; engine "mock" resumes it. Its messages carry "sim_source":"MOCK".
 import { SITE, SIM, topics } from './config.js';
 import { connect, logger } from './mqtt.js';
 
@@ -16,6 +18,7 @@ const EFF = 0.95;
 const r1 = (x) => Math.round(x * 10) / 10;
 
 const inp = { pvW: 900, communityLoadW: 300, shopLoadW: 250, outage: false, buyerRequest: false, backup: false };
+let paused = false; // true while the dashboard has switched the source to the real Wokwi
 let batteryWh = CAP_WH * 0.5;
 
 const { publish } = connect('mock-wokwi', [`${topics.wokwiControl('#')}`, topics.appDemo], (topic, msg) => {
@@ -23,6 +26,13 @@ const { publish } = connect('mock-wokwi', [`${topics.wokwiControl('#')}`, topics
   if ('buyer_request' in msg) patch.buyerRequest = Boolean(msg.buyer_request);
   if ('grid_status' in msg) patch.outage = msg.grid_status === 'OUTAGE';
   if ('emergency_backup_allowed' in msg) patch.backup = Boolean(msg.emergency_backup_allowed);
+  if (Number.isFinite(msg.pv_power_w)) patch.pvW = Math.max(0, msg.pv_power_w);
+  if (Number.isFinite(msg.local_load_w)) patch.communityLoadW = Math.max(0, msg.local_load_w);
+  if (topic === topics.appDemo && (msg.engine === 'mock' || msg.engine === 'wokwi')) {
+    const next = msg.engine === 'wokwi';
+    if (next !== paused) log(next ? 'source switched to Wokwi live: mock PAUSED' : 'source switched to mock: publishing again');
+    paused = next;
+  }
   if (topic === topics.appDemo) {
     if (typeof msg.outage === 'boolean') patch.outage = msg.outage;
     if (typeof msg.backup === 'boolean') patch.backup = msg.backup;
@@ -43,6 +53,7 @@ function step() {
   const now = Date.now();
   const dtH = ((now - last) / 3_600_000) * SIM.timeScale;
   last = now;
+  if (paused) return; // the real Wokwi is the source; the battery model is frozen meanwhile
 
   const buyerDemand = inp.buyerRequest ? inp.shopLoadW : 0;
   const demand = inp.communityLoadW + buyerDemand;
@@ -93,6 +104,7 @@ function step() {
     emergency_backup_allowed: inp.backup,
     pv_delivered_to_microgrid_w: r1(pvDelivered),
     energy_status: energyStatus,
+    sim_source: 'MOCK', // extra field, ignored by the Stage 4E consumers; lets the dashboard show the source
   }, { qos: 0 });
 }
 setInterval(step, 1000);
