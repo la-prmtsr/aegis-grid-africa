@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#FFFFFF">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<title>Aegis-Grid Console</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="/src/console/console.css">
+<script>
+  // Sign-in gate: no session -> log in page. "console.html?guest" opens the demo street without an account.
+  try {
+    if (/[?&]guest\b/.test(location.search)) localStorage.setItem('aegis.session', JSON.stringify({ name: 'Guest', method: 'guest', at: Date.now() }));
+    if (!localStorage.getItem('aegis.session')) location.replace('./auth.html#login');
+  } catch (e) { /* storage blocked: show the console */ }
+</script>
+</head>
+<body>
+<header class="top">
+  <div class="top-in">
+    <a class="brand" href="./index.html" aria-label="Aegis-Grid home">
+      <svg viewBox="4.6 8.0 230.8 220.0" aria-hidden="true"><g stroke="#F5B91A" stroke-width="16" stroke-linecap="round"><line x1="33.40" y1="90.00" x2="12.61" y2="78.00"/><line x1="70.00" y1="53.40" x2="58.00" y2="32.61"/><line x1="120.00" y1="40.00" x2="120.00" y2="16.00"/><line x1="170.00" y1="53.40" x2="182.00" y2="32.61"/><line x1="206.60" y1="90.00" x2="227.39" y2="78.00"/></g><path d="M40 140A80 80 0 0 1 200 140Z" fill="#F5B91A"/><path d="M40 140A80 80 0 0 0 200 140Z" fill="#111A2B"/><g stroke="#17A348" stroke-width="14" stroke-linecap="round"><line x1="61.0" y1="166" x2="179.0" y2="166"/><line x1="77.0" y1="188" x2="163.0" y2="188"/><line x1="95.0" y1="208" x2="145.0" y2="208"/></g></svg>
+      <span>Aegis<span style="color:#17A348">–Grid</span></span>
+    </a>
+    <nav class="topnav" id="topnav" aria-label="Pages"></nav>
+    <div class="top-r">
+      <button class="live" id="liveBtn" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="livePop"><i aria-hidden="true"></i><span id="liveText">Connecting</span></button>
+      <label class="viewas" title="Switch the demo view">
+        <select id="persona" aria-label="View as">
+          <option value="ama">Buyer</option>
+          <option value="kwame">Seller</option>
+          <option value="ops">Operator</option>
+        </select>
+      </label>
+      <button class="btn btn-wallet" id="walletBtn" type="button" aria-label="Wallet">Connect wallet</button>
+      <button class="acct" id="acctBtn" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="acctMenu"><span class="acct-av" id="acctAv">?</span><span class="acct-name" id="acctName">Account</span></button>
+    </div>
+  </div>
+</header>
+
+<div class="live-pop" id="livePop" role="dialog" aria-label="Connection status" hidden>
+  <b class="lp-title">Connection</b>
+  <div class="chips" id="chips"></div>
+  <div class="lp-row"><span>Grid on this feeder</span><span class="status ok" id="gridStatus" hidden>Grid normal</span></div>
+  <div class="lp-row"><span>Simulated time</span><span class="clock" id="clock" title="Simulated time from the meters">--:--</span></div>
+  <p class="lp-note">Meters are simulated (Wokwi / mock meters), payments settle on the Base Sepolia testnet and MoMo is simulated.</p>
+</div>
+
+<div class="acct-menu" id="acctMenu" role="menu" hidden></div>
+
+<div class="shell">
+  <main id="main"></main>
+</div>
+<nav class="tabbar" id="tabbar" aria-label="Sections"></nav>
+<div class="toast" id="toast" role="status"></div>
+<script type="module" src="/src/console/main.js"></script>
+</body>
+</html>

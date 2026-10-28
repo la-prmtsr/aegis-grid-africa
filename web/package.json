@@ -1,0 +1,23 @@
+{
+  "name": "aegis-web",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Aegis-Grid landing page (3D day story) and live console (buyer, seller, operator).",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "ethers": "^6.17.0",
+    "mqtt": "^5.16.1",
+    "three": "0.128.0"
+  },
+  "devDependencies": {
+    "vite": "^5.4.21"
+  }
+}
