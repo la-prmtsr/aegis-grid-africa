@@ -66,8 +66,9 @@ contract AegisEscrow is EIP712, Ownable2Step, Pausable, ReentrancyGuard {
         keccak256("BuyerReading(uint256 tradeId,address meter,uint64 wh,uint64 timestamp)");
 
     uint16 public constant BPS = 10_000;
-    /// @dev Design parameter: the battery must not be discharged below 20% state of charge.
-    uint16 public constant MIN_SOC_BPS = 2_000;
+    /// @dev Design parameter: the battery must not be discharged below 5% state of charge (v2, matches the
+    ///      Wokwi Stage 4E battery reserve). v1 used 20%; changing it requires a new deployment.
+    uint16 public constant MIN_SOC_BPS = 500;
     uint64 public constant MIN_DURATION = 10 minutes;
     uint64 public constant MAX_DURATION = 7 days;
     /// @dev How long the arbiter has to resolve a dispute after the trade expires.

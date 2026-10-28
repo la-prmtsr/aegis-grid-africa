@@ -3,16 +3,19 @@
 
 const env = import.meta.env;
 
-export const SITE = env.VITE_SITE || 'ag-demo';
+export const SITE = env.VITE_SITE || 'ag-sakarya26';
 export const MQTT_WS_URL = env.VITE_MQTT_WS_URL || 'wss://broker.hivemq.com:8884/mqtt';
 
-export const P = `aegisgrid/${SITE}/`;
+// v2: same root as Faras's Wokwi Stage 4E and Unity (docs/integration-v2.md)
+export const P = `aegis-grid/${SITE}/`;
 export const topics = {
   grid: `${P}grid`,
   telemetry: (meterId) => `${P}meter/${meterId}/telemetry`,
   telemetryAll: `${P}meter/+/telemetry`,
   readingAll: `${P}trade/+/reading/+`,
-  simControl: `${P}sim/control`,
+  appRequest: `${P}app/request`, // Buyer Request -> backend relayer
+  appDemo: `${P}app/demo`, // demo controls: outage, daylight, tamper, shop load
+  backendStatus: `${P}backend/status`, // relayer status (retained)
 };
 
 export const METER = { seller: 'METER_A', buyer: 'METER_B' };

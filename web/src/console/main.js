@@ -99,7 +99,7 @@ const main = $('main'), side = $('topnav'), tabbar = $('tabbar'); // side = the 
 let toastT;
 function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.add('on'); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('on'), 3200); }
 
-const SELLER_STATUS = { IDLE_GRID: 'Grid on, idle', CHARGING: 'Charging from solar', BATTERY_FULL: 'Full, solar curtailed', ISLAND: 'Islanded, powering home', EXPORTING: 'Selling to the shop', WAIT_OUTAGE: 'Trade open, waiting for outage', SOC_FLOOR: 'At the 21% floor' };
+const SELLER_STATUS = { IDLE_GRID: 'Grid on, idle', CHARGING: 'Charging from solar', BATTERY_FULL: 'Full, solar curtailed', ISLAND: 'Islanded, battery standing by', EXPORTING: 'Selling to the shop', WAIT_OUTAGE: 'Trade open, waiting for outage', SOC_FLOOR: 'At the 5% reserve' };
 const BUYER_STATUS = { IDLE_GRID: 'Grid on', REQUESTING: 'Requesting power', RECEIVING: 'Receiving clean power', NO_SUPPLY: 'No supply' };
 const STATUS_PILL = { Open: 'warn', Settled: 'ok', Disputed: 'bad', Refunded: 'idle' };
 
@@ -122,7 +122,17 @@ function connectionNotice() {
   if (state.mqtt !== 'online') {
     return `<div class="offline-card">Not connected to the MQTT broker yet (<code>${esc(MQTT_WS_URL)}</code>). Live meter data appears here once it connects.</div>`;
   }
-  return `<div class="offline-card">Connected, but no meter is sending on site <code>${esc(SITE)}</code>. Start the mock meters (<code>cd tools/sim && SITE=${esc(SITE)} npm run meters</code>) or the Wokwi meters with the same <code>SITE</code>, and the bridge (<code>cd bridge && npm start</code>).</div>`;
+  return `<div class="offline-card">Connected, but no meter is sending on site <code>${esc(SITE)}</code>. Start Faras's Wokwi (with the Mosquitto bridge to the public broker) and the backend (<code>cd bridge && npm run v2</code>), or the Wokwi mock (<code>npm run v2:mock</code>).</div>`;
+}
+
+/** Messages from the backend relayer (for example: Wokwi control not configured, trade held). */
+function backendNotice() {
+  const b = state.backend;
+  if (!b) return '';
+  const r = b.lastResult;
+  const held = r && (r.outcome === 'HELD' || r.outcome === 'FAILED') && Date.now() - (b.updatedAt || 0) < 120000
+    ? `<div class="offline-card">Trade #${esc(String(r.id))} was not settled: ${esc(r.reason || r.outcome)}. The deposit stays in escrow and can be refunded after the trade expires.</div>` : '';
+  return (b.notice ? `<div class="offline-card">${esc(b.notice)}</div>` : '') + held;
 }
 
 // ------------------------------------------------------------------ rendering
@@ -306,8 +316,8 @@ function buyerParts() {
 
   patch('b-banner', !state.grid ? '' : outage
     ? `<div class="banner bad"><div><b>Load shedding on this feeder</b>A seller's battery next door can power your shop instead of a generator.</div></div>`
-    : `<div class="banner ok"><div><b>Grid power is on</b>Requests open during load shedding. For the demo you can start an outage here (mock meters).</div><button class="btn btn-dark" type="button" data-act="outage-on">Start load shedding (demo)</button></div>`);
-  patch('b-notice', connectionNotice());
+    : `<div class="banner ok"><div><b>Grid power is on</b>Requests open during load shedding. For the demo you can start an outage here.</div><button class="btn btn-dark" type="button" data-act="outage-on">Start load shedding (demo)</button></div>`);
+  patch('b-notice', connectionNotice() + backendNotice());
 
   const settledMine = myTrades('buyer').filter((x) => x.status === 'Settled');
   patch('b-stats', [
@@ -323,11 +333,12 @@ function buyerParts() {
   const t = tradeId ? state.trades[tradeId] : null;
   const rd = tradeId ? state.readings[tradeId] || {} : {};
   let html;
-  if (buyer?.requesting && !tradeId) {
+  const requesting = buyer?.requesting || state.backend?.requests?.app;
+  if (requesting && !tradeId) {
     html = `<div class="req-card"><div class="ph"><h2>Request clean power</h2><span class="pill warn">Opening trade</span></div>
       <div class="searching"><span class="spinner" aria-hidden="true"></span>The bridge is opening a trade on-chain and depositing the escrow. This takes one block.</div>
       <button class="btn btn-line" type="button" data-act="request-off">Cancel request</button></div>`;
-  } else if (tradeId && (buyer?.requesting || buyer?.status === 'RECEIVING')) {
+  } else if (tradeId && (requesting || buyer?.status === 'RECEIVING')) {
     const price = pricePerWhOf(t);
     const got = Number(buyer?.tradeWh || 0);
     html = `<div class="live"><div class="ph"><h2>Live session · trade #${tradeId}</h2><span class="pill ${buyer?.status === 'RECEIVING' ? 'ok' : 'warn'}">${esc(BUYER_STATUS[buyer?.status] || buyer?.status || 'Starting')}</span></div>
@@ -347,7 +358,7 @@ function buyerParts() {
       <ul class="timeline">
         <li class="done">Seller meter final reading: ${rd.seller ? wh(rd.seller.wh) : '…'}</li>
         <li class="${rd.buyer ? 'done' : 'now'}">Your meter final reading: ${rd.buyer ? wh(rd.buyer.wh) : '…'}</li>
-        <li class="${rd.buyer ? 'now' : ''}">Bridge signs both readings (EIP-712) and calls settleTrade</li>
+        <li class="${rd.buyer ? 'now' : ''}">Each meter signed its own reading (EIP-712); the backend verifies both and calls settleTrade</li>
       </ul></div>`;
   } else if (ui.momo) {
     html = momoCheckoutHTML();
@@ -359,7 +370,7 @@ function buyerParts() {
         : 'Available during load shedding.'}</p>
       <div class="momo-quote"><span>Deposit for up to ${MOMO.tradeMaxWh} Wh</span><b>${usd(depositUsd())}</b><small>${usd(MOMO.usdPerKWh)} per kWh · demo rate</small></div>
       <button class="btn btn-momo btn-big" type="button" data-act="pay-open" ${can ? '' : 'disabled'}><span class="momo-dot" aria-hidden="true">M</span>Request power · pay with MoMo</button>
-      <p class="note"><span class="pill sim">Simulated MoMo</span> No real payment is made. After the deposit, the console sends <b>requesting: true</b> to the mock meters (with Wokwi, press the request button in the buyer simulation).</p></div>`;
+      <p class="note"><span class="pill sim">Simulated MoMo</span> No real payment is made. After the deposit, the backend opens the trade on-chain and switches on the buyer request in the Wokwi simulation.</p></div>`;
   }
   patch('b-action', html);
 
@@ -507,7 +518,7 @@ function sellerParts() {
   const settledS = myTrades('seller').filter((x) => x.status === 'Settled');
   patch('s-stats', [
     stat('sun', 'sun', 'Solar now', watts(s?.pvW), s ? `charging ${watts(s.chargeW)}` : 'no data'),
-    stat('sky', 'home', 'Home load', watts(s?.loadW), s ? (s.grid === 'OUTAGE' ? 'islanded' : 'grid on') : 'no data'),
+    stat('sky', 'home', 'Community load', watts(s?.loadW), s ? (s.grid === 'OUTAGE' ? (s.backupAllowed ? 'emergency backup on' : 'islanded, backup off') : 'grid on') : 'no data'),
     stat('green', 'bolt', 'Selling now', watts(s?.exportW), s && Number(s.exportW) > 0.1 ? 'to the buyer\'s shop' : 'idle'),
     stat('violet', 'check', 'Trades settled', String(settledS.length), `${wh(settledS.reduce((a, x) => a + (x.deliveredWh || 0), 0))} sold`),
   ].join(''));
@@ -516,14 +527,13 @@ function sellerParts() {
   patch('s-battery', `<div class="ph"><h2>State of charge</h2><span class="pill ${s?.status === 'EXPORTING' ? 'ok' : s?.status === 'CHARGING' ? 'warn' : 'idle'}">${esc(SELLER_STATUS[s?.status] || (s ? s.status : 'No data'))}</span></div>
     <div class="batt-wrap">
       <div class="cell" aria-hidden="true"><div class="lvl" style="height:calc((100% - 12px)*${(soc ?? 0) / 100})"></div>
-        <div class="band" style="bottom:calc(6px + (100% - 12px)*.8)"><span>80%</span></div>
-        <div class="band" style="bottom:calc(6px + (100% - 12px)*.21)"><span>21%</span></div></div>
+        <div class="band" style="bottom:calc(6px + (100% - 12px)*.05)"><span>5%</span></div></div>
       <div>
         <div class="soc">${soc != null ? soc.toFixed(1) : '–'}<small>%</small></div>
         <div class="rows" style="margin-top:12px">
           <div class="row"><span>Stored energy</span><b>${s ? wh(s.batteryWh) : '–'}</b></div>
-          <div class="row"><span>Health window</span><b>21% – 80%</b></div>
-          <div class="row"><span>Home load</span><b>${watts(s?.loadW)}</b></div>
+          <div class="row"><span>Battery reserve</span><b>${s?.minSocPct ?? 5}%</b></div>
+          <div class="row"><span>Community load</span><b>${watts(s?.loadW)}</b></div>
           <div class="row"><span>Grid</span><b>${s ? (s.grid === 'OUTAGE' ? 'Off · islanded' : 'On') : '–'}</b></div>
         </div>
       </div>
@@ -542,7 +552,7 @@ function sellerParts() {
       <div class="flowbar" aria-hidden="true" style="margin:14px 0"><i></i></div>
       <div class="rows"><div class="row"><span>Sent this trade</span><b>${sent.toFixed(1)} Wh</b></div>
         <div class="row"><span>Your share so far (est.)</span><b>${price != null ? money((BigInt(Math.floor(sent * 0.98)) * price * BigInt(10000 - util - plat)) / 10000n) : '–'}</b></div>
-        <div class="row"><span>Battery floor</span><b>stops at 21%</b></div></div>
+        <div class="row"><span>Battery reserve</span><b>stops at ${s?.minSocPct ?? 5}%</b></div></div>
       <p class="note">You are paid for what the shop's meter receives (about 2% less than you send, cable loss).</p>`
     : `<div class="ph"><h2>Selling now</h2><span class="pill idle">${state.grid === 'OUTAGE' ? 'Waiting for a request' : 'Grid on'}</span></div>
       <p style="margin:0;color:var(--muted)">${state.grid === 'OUTAGE' ? 'Your battery is ready. When the shop requests power, the bridge opens a trade and your meter starts exporting.' : 'Your battery sells only during load shedding, inside the islanded street microgrid.'}</p>`);
@@ -573,7 +583,7 @@ function sellerParts() {
       <div class="row"><span>Solar output</span><b>${watts(s?.pvW)}</b></div>
       <div class="row"><span>Charging the battery</span><b>${watts(s?.chargeW)}</b></div>
       <div class="row"><span>Surplus curtailed (wasted)</span><b style="color:${Number(s?.curtailedW) > 0 ? 'var(--alert)' : 'inherit'}">${watts(s?.curtailedW)}</b></div>
-      <div class="row"><span>Battery powering home</span><b>${watts(s?.dischargeLocalW)}</b></div>
+      <div class="row"><span>Battery to community (backup)</span><b>${watts(s?.dischargeLocalW)}</b></div>
       <div class="row"><span>Exported over the line</span><b>${watts(s?.exportW)}</b></div>
       <div class="row"><span>Lifetime export (meter)</span><b>${s ? wh(s.exportWhTotal) : '–'}</b></div>
     </div>`);
@@ -675,7 +685,7 @@ function opsParts() {
   const s = state.seller, b = state.buyer;
   const day = s ? Number(s.pvW) > 0 : true;
   const tg = (act, label, sub, on, danger) => `<button class="tg ${danger ? 'danger' : ''}" type="button" data-act="${act}" aria-pressed="${on}"><span>${label}<small>${sub}</small></span><i></i></button>`;
-  patch('o-demo', `<div class="ph"><h2>Demo control</h2><span class="pill blue">mock meters</span></div>
+  patch('o-demo', `<div class="ph"><h2>Demo control</h2><span class="pill blue">via backend</span></div>
     <div class="toggles">
       ${tg('t-outage', 'Load shedding', state.grid ? state.grid.toLowerCase() : 'unknown', state.grid === 'OUTAGE', true)}
       ${tg('t-day', 'Daylight', s ? `solar ${watts(s.pvW)}` : 'no data', day)}
@@ -684,7 +694,7 @@ function opsParts() {
     </div>
     <label style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:12px;font-size:13.5px;color:var(--muted)">Shop load
       <span class="stepper"><button type="button" data-act="load-down" aria-label="Less load">−</button><b class="mono" style="color:var(--ink)">${watts(b?.loadW)}</b><button type="button" data-act="load-up" aria-label="More load">+</button></span></label>
-    <p class="note">These publish to <span class="mono">aegisgrid/${esc(SITE)}/sim/control</span>, which <b>tools/sim</b> mock meters obey. Wokwi meters ignore it: use their switch and button. Try: daylight off → load shedding on → shop requests → wait → request off. Turn tamper on first to see a dispute.</p>`);
+    <p class="note">Requests go to <span class="mono">aegis-grid/${esc(SITE)}/app/request</span>, the rest to <span class="mono">app/demo</span>. The backend forwards them to Wokwi when the control format is configured; tamper acts on Meter B; daylight and shop load act on the Wokwi mock only (with the real Wokwi use its potentiometers). Try: load shedding on → shop requests → wait → request off. Turn tamper on first to see a dispute.</p>`);
 
   patch('o-grid', microgridSVG());
 

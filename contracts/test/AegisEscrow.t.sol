@@ -279,16 +279,24 @@ contract AegisEscrowTest is Test {
         esc.settleTrade(id, s, ssig, b, bsig);
     }
 
-    /// 10. Depth-of-discharge floor (design parameter: 20%).
+    /// 10. Depth-of-discharge floor (design parameter: 5%, v2).
     function test_DepthOfDischarge() public {
         uint256 a = _open();
-        _settleReverts(a, _s(a, 500, 1999), _b(a, 490), AegisEscrow.DepthOfDischarge.selector);
+        _settleReverts(a, _s(a, 500, 499), _b(a, 490), AegisEscrow.DepthOfDischarge.selector);
 
-        _settle(a, _s(a, 500, 2000), _b(a, 490));
+        _settle(a, _s(a, 500, 500), _b(a, 490));
         assertEq(uint8(_status(a)), uint8(AegisEscrow.Status.Settled));
 
         uint256 b = _open();
         _settleReverts(b, _s(b, 500, 10_001), _b(b, 490), AegisEscrow.DepthOfDischarge.selector);
+    }
+
+    /// 10b. The v2 reserve is 5% (500 bps); 20% (the v1 floor) now settles.
+    function test_ReserveIsFivePercent() public {
+        assertEq(esc.MIN_SOC_BPS(), 500);
+        uint256 id = _open();
+        _settle(id, _s(id, 500, 2000), _b(id, 490));
+        assertEq(uint8(_status(id)), uint8(AegisEscrow.Status.Settled));
     }
 
     /// 11. Zero and over-maximum readings revert.

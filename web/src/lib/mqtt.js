@@ -1,4 +1,4 @@
-// Live meter data over MQTT (WebSocket), following docs/data-format.md v1.
+// Live meter data over MQTT (WebSocket), following docs/integration-v2.md.
 import mqtt from 'mqtt';
 import { MQTT_WS_URL, SITE, topics, METER } from './config.js';
 import { state, update } from './store.js';
@@ -15,7 +15,7 @@ export function startMqtt() {
 
   client.on('connect', () => {
     update({ mqtt: 'online' });
-    client.subscribe([topics.grid, topics.telemetryAll, topics.readingAll]);
+    client.subscribe([topics.grid, topics.telemetryAll, topics.readingAll, topics.backendStatus]);
   });
   client.on('reconnect', () => update({ mqtt: 'connecting' }));
   client.on('offline', () => update({ mqtt: 'offline' }));
@@ -26,7 +26,9 @@ export function startMqtt() {
     let msg;
     try { msg = JSON.parse(payload.toString()); } catch { return; }
 
-    if (topic === topics.grid) {
+    if (topic === topics.backendStatus) {
+      update({ backend: msg });
+    } else if (topic === topics.grid) {
       update({ grid: msg.status === 'OUTAGE' ? 'OUTAGE' : 'AVAILABLE' });
     } else if (topic === topics.telemetry(METER.seller)) {
       onSeller(msg);
@@ -74,13 +76,16 @@ function pushSample() {
 export const meterOnline = (id) => Date.now() - (state.lastSeen[id] || 0) < 5000;
 
 /**
- * Demo control for the mock meters (tools/sim/mock-meters.js listens on sim/control).
- * Fields: outage, requesting, tamper (booleans), pvW, sellerLoadW, shopLoadW (numbers).
- * The Wokwi meters do not listen here: with Wokwi use the switch and button in the simulation.
+ * Send a request or a demo control to the backend (v2).
+ * - requesting -> app/request: the relayer opens the trade on-chain, then turns on the Wokwi buyer request.
+ * - outage, tamper, pvW, shopLoadW -> app/demo: the relayer forwards outage to Wokwi (when configured),
+ *   Meter B handles tamper, and the Wokwi mock (bridge/src/v2/mock-wokwi.js) obeys the rest.
  */
 export function simControl(patch) {
   if (!client || !client.connected) return false;
-  client.publish(topics.simControl, JSON.stringify(patch));
+  const { requesting, ...demo } = patch;
+  if (typeof requesting === 'boolean') client.publish(topics.appRequest, JSON.stringify({ requesting }), { qos: 1 });
+  if (Object.keys(demo).length) client.publish(topics.appDemo, JSON.stringify(demo), { qos: 1 });
   return true;
 }
 

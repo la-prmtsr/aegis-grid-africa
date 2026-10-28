@@ -48,6 +48,8 @@ Browsers cannot open raw MQTT on port 1883, so the console uses WebSocket. `tool
 
 ## How the console maps to the backend
 
+> **v2 (Wokwi Stage 4E + Unity):** topics now start with `aegis-grid/<SITE>/` (default site `ag-sakarya26`). **Request clean power / Stop and pay** publish `{ "requesting": true/false }` to `app/request`; the demo controls publish to `app/demo`; the console also reads the relayer status on `backend/status`. Start the backend with `cd bridge && npm run v2` (or `npm run v2:mock` without Wokwi). Details: [docs/integration-v2.md](../docs/integration-v2.md). The table below describes v1.
+
 | Console | Backend |
 |---|---|
 | Grid status, battery %, solar, curtailed, export/import watts | `aegisgrid/<SITE>/grid` and `meter/METER_A|METER_B/telemetry` |
