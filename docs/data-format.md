@@ -1,5 +1,7 @@
 # Data format v1: meters, bridge and dashboard
 
+> **Superseded for the live demo by [integration-v2.md](integration-v2.md)** (Faras's Wokwi Stage 4E + Unity). Kept because the v1 on-chain evidence in `evidence.md` was produced with this protocol and the `firmware/` and `tools/sim/` code.
+
 This is the agreement between the three parts of the system. The Wokwi meters, the mock meters, the bridge and the dashboard all follow it, so each part can be built and tested on its own. **Change it only with the whole team, and bump `v`.**
 
 All meter data is **simulated** (Wokwi or the mock script). Every message carries `"simulated": true`.

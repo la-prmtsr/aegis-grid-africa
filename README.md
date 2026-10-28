@@ -6,8 +6,10 @@ Neighbourhood home batteries store midday solar energy that would otherwise be w
 
 Built for the Tech Hub Africa Hackathon 2026. Track: **Electricity Efficiency**.
 
-- **Contract (Base Sepolia, source verified):** [`0x918ad58816c6d09137eB4075c2BA5c3e56aC4f6a`](https://base-sepolia.blockscout.com/address/0x918ad58816c6d09137eB4075c2BA5c3e56aC4f6a)
+- **Contract v2** (5% battery reserve, used with the Wokwi + Unity demo): [`0x273651238fe3e2279d2295edcbd005f31347fc6e`](https://base-sepolia.blockscout.com/address/0x273651238fe3e2279d2295edcbd005f31347fc6e)
+- **Contract v1** (Base Sepolia, source verified): [`0x918ad58816c6d09137eB4075c2BA5c3e56aC4f6a`](https://base-sepolia.blockscout.com/address/0x918ad58816c6d09137eB4075c2BA5c3e56aC4f6a)
 - **On-chain evidence** (honest trade, tampered trade, payout): [docs/evidence.md](docs/evidence.md)
+- **How the parts connect:** [docs/integration-v2.md](docs/integration-v2.md)
 - Demo video: _TODO before submission_
 - Live dashboard: _TODO before submission_
 - Wokwi simulation: _TODO before submission_
@@ -23,8 +25,8 @@ Built for the Tech Hub Africa Hackathon 2026. Track: **Electricity Efficiency**.
 Aegis-Grid turns the batteries that households already own into a shared, neighbourhood-scale buffer:
 
 1. **Onboarding.** Each household registers the signing key of its smart meter on the contract.
-2. **Surplus charge (day).** Batteries charge from solar surplus up to an 80% health ceiling.
-3. **Emergency P2P discharge (night).** During load shedding the street's microgrid is islanded from the utility grid. A shop presses *Request Clean Power*; a nearby battery owner's inverter supplies it, keeping its own battery above 20%.
+2. **Surplus charge (day).** Batteries charge from solar surplus that the grid connection point would otherwise curtail.
+3. **Emergency P2P discharge (night).** During load shedding the point of common coupling (PCC) opens and the street's microgrid is islanded from the utility grid. A shop (UMKM) presses *Request Clean Power*; a nearby battery owner's inverter supplies it first (buyer first), keeping a 5% battery reserve. Community loads such as the city hall are supplied only if the battery owner allows emergency backup.
 4. **Dual-meter verification and settlement.** The seller's meter signs the energy it sent, the buyer's meter signs the energy it received. The escrow contract pays for what the buyer received if the two agree within 3%; otherwise it freezes the funds as *Disputed*.
 
 Electrical safety note: exporting into utility lines during an outage is dangerous for line workers. The design therefore assumes a community microgrid with an islanding switch at its connection point, so P2P supply happens only inside the islanded microgrid.
@@ -33,9 +35,10 @@ Electrical safety note: exporting into utility lines during an outage is dangero
 
 | Component | Status in this prototype |
 |---|---|
-| Smart meters (ESP32) | **Simulated** in Wokwi; potentiometers stand in for sensors. A Node.js mock (`tools/sim`) speaks the same protocol |
-| Cable between the two homes | **Simulated** by an MQTT topic carrying cumulative energy, with 2% line loss |
-| Meter signing keys | Software keys held by the bridge. A hardware secure element is the production design |
+| Seller meter (Meter A) | **Simulated**: ESP32 in Wokwi (Stage 4E firmware; potentiometers stand in for sensors) plus a gateway that counts the energy per trade |
+| Digital twin | Unity scene driven live by the same Wokwi telemetry |
+| Buyer meter (Meter B) | **Simulated**: a separate meter process with its own key; its input is the Wokwi power flow with 2% line loss |
+| Meter signing keys | Software keys, one per meter process; the relayer holds none. A hardware secure element is the production design |
 | Dual-meter verification | **Real**: EIP-712 signatures checked on-chain by the contract |
 | Escrow, fee split, disputes, payouts | **Real** smart contract on the Base Sepolia testnet (test ETH, no real money) |
 | Phone-number login, mobile money payout | Not implemented; roadmap |
@@ -45,17 +48,19 @@ Electrical safety note: exporting into utility lines during an outage is dangero
 
 ```mermaid
 flowchart LR
-  A[Meter A, seller<br/>Wokwi ESP32] -- telemetry, final reading --> M((MQTT broker))
-  B[Meter B, buyer<br/>Wokwi ESP32] -- telemetry, final reading --> M
-  A -- line: energy sent --> B
-  M --> BR[Bridge<br/>Node.js]
-  BR -- start / stop --> M
-  BR -- openTrade, settleTrade<br/>EIP-712 signed readings --> C[AegisEscrow<br/>Base Sepolia]
-  C -- events --> D[Dashboard]
+  W[Wokwi ESP32<br/>Meter A, Stage 4E] -- telemetry --> M((MQTT))
+  M --> U[Unity digital twin]
+  M --> GA[Meter A gateway<br/>seller key]
+  GA --> GB[Meter B<br/>buyer key]
+  GA & GB -- EIP-712 signed readings --> R[Relayer]
+  D[Dashboard] -- Buyer Request --> R
+  R -- control --> M
+  R -- openTrade, settleTrade --> C[AegisEscrow v2<br/>Base Sepolia]
+  C -- events --> D
   C -- withdraw --> P[Seller, utility, platform,<br/>buyer refund]
 ```
 
-The message format between meters, bridge and dashboard is specified in [docs/data-format.md](docs/data-format.md).
+Topics, message fields, verification rules and how to run each part: [docs/integration-v2.md](docs/integration-v2.md).
 
 ## Tech stack
 
@@ -63,18 +68,22 @@ The message format between meters, bridge and dashboard is specified in [docs/da
 |---|---|
 | Smart contract | Solidity 0.8.28, OpenZeppelin Contracts 5.4.0, Foundry (forge, cast) |
 | Network | Base Sepolia testnet (chain id 84532) |
-| Bridge | Node.js 22, ethers 6, mqtt 5, dotenv |
-| Meters | ESP32 on Wokwi, Arduino framework, PubSubClient, ArduinoJson 7 |
-| Messaging | MQTT (public HiveMQ broker for the demo) |
+| Backend | Node.js 22, ethers 6, mqtt 5, dotenv (meter gateway, meter B, relayer) |
+| Meter A | ESP32 on Wokwi (Stage 4E firmware) |
+| Digital twin | Unity |
+| Dashboard | Vite, plain JavaScript, three.js, ethers |
+| Messaging | MQTT: Mosquitto on the simulation laptop, bridged to the public HiveMQ broker |
 
 ## Repository structure
 
 ```
-contracts/     AegisEscrow.sol, 25 Foundry tests, deploy script
-bridge/        MQTT <-> contract bridge (listen.js, index.js, chain.js)
-firmware/      Wokwi sketches for meter A (seller) and meter B (buyer), host test
-tools/sim/     mock meters, local MQTT broker, model tests
-docs/          data format, developer setup, on-chain evidence
+contracts/                AegisEscrow.sol (v2: 5% reserve), 26 Foundry tests, deploy script
+bridge/src/v2/            backend v2: Meter A gateway, Meter B, relayer, Wokwi Stage 4E mock, setup
+bridge/src/aegis-unity/   Stage 5A adapter (Faras): Wokwi telemetry checks and buyer-first allocation
+bridge/test/              19 tests (adapter + v2 meters, verification, signatures)
+web/                      landing page, sign-in and live console
+docs/                     integration v2, Mosquitto bridge config, developer setup, on-chain evidence
+bridge/src/*.js, firmware/, tools/sim/   v1 (two simple meters), kept for the v1 evidence
 ```
 
 ## Getting started
@@ -90,23 +99,20 @@ cp .env.example .env            # then fill in your own testnet values; never co
 **Run the tests**
 
 ```bash
-cd contracts && forge test && cd ..          # 25 contract tests
-./firmware/test/run.sh                       # meter firmware logic on the PC (needs g++)
-cd tools/sim && npm install && npm test      # meter model tests
+cd contracts && forge test && cd ..          # 26 contract tests
+cd bridge && npm install && npm test         # 19 backend tests
 ```
 
-**Run the full flow** (two terminals, after deploying the contract and setting `.env`):
+**Run the full flow** (after deploying contract v2 and running `npm run v2:setup`, see [docs/integration-v2.md](docs/integration-v2.md)):
 
 ```bash
-# terminal 1: mock meters (or the Wokwi meters with the same SITE)
-set -a; source .env; set +a
-cd tools/sim && npm run meters        # keys: d day/night, o outage, r request, t tamper, q quit
-
-# terminal 2: bridge
-cd bridge && npm install && npm start
+cd bridge
+npm run v2          # with the Wokwi Stage 4E simulation running and bridged to the public broker
+npm run v2:mock     # or, without Wokwi: a mock with the same telemetry (keys: d o r b + - q)
+cd ../web && npm install && npm run dev       # dashboard on http://localhost:5173/console.html
 ```
 
-Press `d`, `o`, `r`, wait, then `r` again: the bridge opens a trade, the meters exchange energy, and the trade settles on-chain. Press `t` first to see a tampered meter produce a dispute.
+In the dashboard: start load shedding, request power, wait, then stop and pay. The backend opens the trade on-chain, both meters sign their readings and the trade settles. Turn on "Tamper buyer meter" first to see the contract freeze a dispute.
 
 ## Smart contract
 
@@ -140,17 +146,18 @@ These are choices, not measured results.
 
 | Parameter | Value | Reasoning |
 |---|---|---|
-| Minimum battery state of charge | 20% (firmware keeps 21%) | Protects battery life and leaves the owner a reserve; 1 point margin avoids rounding below the contract's floor |
-| Charge ceiling | 80% | Battery health window |
+| Minimum battery state of charge | 5% (contract v2 and Wokwi Stage 4E; v1 used 20%) | Keeps a reserve for the battery owner; the contract rejects a reading below it |
+| Charge limit | 100% in the simulation | A real battery management system sets its own safe limits |
+| Allocation during an outage | Buyer first; community load only with the owner's emergency-backup permission | The paying shop is served before shared loads |
 | Reading tolerance | 3% | Covers normal cable loss between neighbours; larger gaps indicate a fault or tampering |
 | Simulated line loss | 2% | Inside the tolerance, so honest trades settle |
 | Fee split | 15% utility (grid fee), 2% platform, rest to seller | Illustrative; the utility is paid for its infrastructure |
 | Demo price | 1 gwei per Wh | Kept tiny so the demo runs on faucet test ETH |
-| Simulation speed | 60× (1 s = 1 simulated minute) | Makes a trade visible within a short video |
+| Energy accounting speed | 60× (1 s = 1 simulated minute) | Makes a trade large enough to settle within a short video; checked against the Wokwi battery model at run time |
 
 ## Measured cost
 
-From real Base Sepolia transactions (details in [docs/evidence.md](docs/evidence.md)): `openTrade` 195,373 gas, `settleTrade` 98,494 to 183,982 gas when it settles and 57,716 when it freezes a dispute, `withdraw` 32,415 gas. We report gas units; a dollar cost depends on mainnet gas and ETH prices on the day.
+From real Base Sepolia transactions with contract v1 (details in [docs/evidence.md](docs/evidence.md)): `openTrade` 195,373 gas, `settleTrade` 98,494 to 183,982 gas when it settles and 57,716 when it freezes a dispute, `withdraw` 32,415 gas. We report gas units; a dollar cost depends on mainnet gas and ETH prices on the day.
 
 ## Limitations and roadmap
 

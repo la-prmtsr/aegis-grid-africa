@@ -596,12 +596,12 @@ tbody tr:hover td{background:#F7FAFC}
 .topnav .side-ind{position:absolute;left:0;top:0;bottom:0;height:auto;width:0;border-radius:999px;background:#EDF1F5;box-shadow:none;
   transition:transform .4s var(--ease),width .4s var(--ease);z-index:0;pointer-events:none}
 .top-r{justify-self:end;display:flex;align-items:center;gap:8px}
-.live{display:inline-flex;align-items:center;gap:8px;border:0;background:transparent;padding:8px 10px;border-radius:999px;font:600 13px var(--f-display);color:var(--muted);cursor:pointer;white-space:nowrap}
-.live:hover,.live[aria-expanded="true"]{background:#F1F4F7;color:var(--ink)}
-.live i{width:8px;height:8px;border-radius:50%;background:#94A3B8;flex:none}
-.live.ok i{background:var(--green);animation:pulse 2s infinite}
-.live.warn i{background:var(--sun)}
-.live.off i{background:var(--rose)}
+button.live{display:inline-flex;align-items:center;gap:8px;border:0;background:transparent;padding:8px 10px;border-radius:999px;font:600 13px var(--f-display);color:var(--muted);cursor:pointer;white-space:nowrap}
+button.live:hover,button.live[aria-expanded="true"]{background:#F1F4F7;color:var(--ink)}
+button.live i{width:8px;height:8px;border-radius:50%;background:#94A3B8;flex:none}
+button.live.ok i{background:var(--green);animation:pulse 2s infinite}
+button.live.warn i{background:var(--sun)}
+button.live.off i{background:var(--rose)}
 .viewas select{appearance:none;-webkit-appearance:none;border:1px solid var(--line);border-radius:999px;cursor:pointer;
   background:#fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%235A6B80' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") no-repeat right 12px center/12px;
   padding:9px 32px 9px 14px;font:600 13.5px var(--f-display);color:var(--ink)}
@@ -623,7 +623,7 @@ tbody tr:hover td{background:#F7FAFC}
 .pill::before{display:none}
 
 @media (max-width:1200px){ .acct-name{display:none} .acct{padding:3px} .topnav a{padding:9px 12px} }
-@media (max-width:1020px){ .live span{display:none} .btn-wallet .w-text,.btn-wallet .w-role{display:none} .btn-wallet{padding:9px} .topnav a{padding:8px 10px;font-size:13.5px} }
+@media (max-width:1020px){ button.live span{display:none} .btn-wallet .w-text,.btn-wallet .w-role{display:none} .btn-wallet{padding:9px} .topnav a{padding:8px 10px;font-size:13.5px} }
 @media (max-width:820px){
   .top-in{grid-template-columns:auto 1fr;padding:8px 8px 8px 12px}
   .topnav{display:none}
