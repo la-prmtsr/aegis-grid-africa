@@ -65,7 +65,7 @@ flowchart LR
 | Tampered buyer meter (contract v1) | 138 vs 81 Wh → **disputed, funds frozen** · [details](docs/evidence.md) |
 | Seller payout | `withdraw()` paid out; a second attempt reverted · [details](docs/evidence.md) |
 | Cost per settlement | ~98k to 184k gas measured on-chain; a dispute costs ~58k |
-| Tests | 26 contract tests · 19 backend tests |
+| Tests | 26 contract tests · 21 backend tests |
 
 ## What is real and what is simulated
 
@@ -88,7 +88,7 @@ git clone --recurse-submodules https://github.com/la-prmtsr/aegis-grid-africa.gi
 cd aegis-grid-africa && cp .env.example .env   # testnet keys only, never commit .env
 
 cd contracts && forge test && cd ..           # 26 tests
-cd bridge && npm install && npm test          # 19 tests
+cd bridge && npm install && npm test          # 21 tests
 ```
 
 Run the demo without hardware (needs testnet keys and contract v2 in `.env`, see the [integration guide](docs/integration-v2.md)):
@@ -101,7 +101,7 @@ cd bridge && npm run v2:mock        # add -- --monitor to run without any blockc
 cd web && npm install && npm run dev
 ```
 
-In the dashboard: **Operator → Load shedding**, then **Buyer → Request power**, wait, then **Stop and pay**. Turn on **Tamper buyer meter** first to see a dispute. Deployment, the Mosquitto bridge for Wokwi and all MQTT topics: [docs/integration-v2.md](docs/integration-v2.md).
+In the dashboard: **Operator → Control room** (PV, load, utility outage, emergency backup, engine Mock or Wokwi live), turn on **Utility outage**, then **Buyer → Request power**, wait, then **Stop and pay**. Turn on **Tamper Meter B** first to see a dispute. Unity only visualises; every control is in the dashboard. Deployment, the Mosquitto bridge for Wokwi and all MQTT topics: [docs/integration-v2.md](docs/integration-v2.md).
 
 ## Repository
 

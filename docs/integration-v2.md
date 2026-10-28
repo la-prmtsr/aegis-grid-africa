@@ -49,7 +49,7 @@ All topics start with `aegis-grid/ag-sakarya26/`.
 | `trade/<id>/reading/seller` and `/buyer` | meters → relayer, dashboard | signed final readings, retained |
 | `backend/status` | relayer → dashboard | retained: active trade, approvals, last result, notices |
 | `app/request` | dashboard → relayer | `{ "requesting": true \| false }` |
-| `app/demo` | dashboard → relayer, Meter B, mock | `outage`, `backup`, `tamper`, `pvW`, `shopLoadW` |
+| `app/demo` | dashboard → relayer, Meter B, mock | `outage`, `backup`, `tamper`, `pvW`, `communityLoadW`, `engine` (mock only) |
 
 ## How the energy is counted
 
@@ -89,7 +89,7 @@ One-time setup (Ola's laptop, WSL):
 
 ```bash
 cd ~/aegis-grid-africa && git pull
-cd bridge && npm install && npm test          # 19 tests: Faras's 6 + 13 for v2
+cd bridge && npm install && npm test          # 21 tests: Faras's 6 + 15 for v2
 cd ../contracts && forge test                  # 26 tests
 ```
 
@@ -122,7 +122,7 @@ Dashboard: `web/.env` needs `VITE_SITE=ag-sakarya26`, `VITE_ESCROW_ADDRESS` = th
 
 ## Open items
 
-1. **Wokwi control format.** The exact sub-topics and JSON under `demo/control/` for buyer request, outage and emergency backup are not known yet. Until they are set in `.env` (`WOKWI_CTRL_BUYER_TOPIC`, `WOKWI_CTRL_BUYER_ON`, `WOKWI_CTRL_BUYER_OFF`, same for `OUTAGE` and `BACKUP`), the relayer only logs what it would send, and the buyer request must be pressed in Wokwi or Unity (the backend then opens the trade by itself). The mock uses a provisional format only for development.
+1. **Wokwi control format.** The exact sub-topics and JSON under `demo/control/` for buyer request, outage and emergency backup are not known yet. Until they are set in `.env` (`WOKWI_CTRL_BUYER_TOPIC`, `WOKWI_CTRL_BUYER_ON`, `WOKWI_CTRL_BUYER_OFF`, same for `OUTAGE` and `BACKUP`), the relayer only logs what it would send, and the buyer request must be pressed in Wokwi or Unity (the backend then opens the trade by itself). The PV and local-load sliders of the dashboard Control room use `WOKWI_CTRL_PV_TOPIC` / `WOKWI_CTRL_PV_VALUE` and `WOKWI_CTRL_LOAD_TOPIC` / `WOKWI_CTRL_LOAD_VALUE`, where `{value}` in the payload is replaced by the watts (for example `{"pv_power_w":{value}}`). While a control is not configured, its slider is disabled when Wokwi live is the source. The mock uses a provisional format only for development.
 2. **Time scale** of the Stage 4E firmware (see above).
 3. Seller consent is a standing permission (meter registered on-chain plus `SELLER_CONSENT=true`), not a per-trade click.
 

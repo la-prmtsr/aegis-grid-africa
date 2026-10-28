@@ -6,6 +6,7 @@ import { connect, logger } from './mqtt.js';
 import { connectChain, STATUS } from './chain.js';
 import { recoverSigner } from './signing.js';
 import { settlementDecision } from './meters.js';
+import { controlMessage } from './control.js';
 
 const log = logger('relayer');
 const c = await connectChain();
@@ -51,20 +52,24 @@ const { publish } = connect('relayer', [topics.telemetry('METER_A'), topics.appR
   if (topic === topics.appDemo) {
     if (typeof msg.outage === 'boolean') wokwiControl('outage', msg.outage);
     if (typeof msg.backup === 'boolean') wokwiControl('backup', msg.backup);
+    if (Number.isFinite(msg.pvW)) wokwiControl('pv', msg.pvW);
+    if (Number.isFinite(msg.communityLoadW)) wokwiControl('load', msg.communityLoadW);
     return;
   }
   const m = topic.match(/trade\/(\d+)\/reading\/(seller|buyer)$/);
   if (m) return onReading(Number(m[1]), m[2], msg);
 }, log);
 
-function wokwiControl(kind, on) {
-  const ctl = WOKWI_CONTROL[kind];
-  if (!ctl.topic) {
-    log(`(Wokwi control "${kind}" not configured, would set it ${on ? 'ON' : 'OFF'})`);
+/** Send one command to Wokwi: a switch (true/false) or a setpoint in watts. */
+function wokwiControl(kind, input) {
+  const label = typeof input === 'boolean' ? (input ? 'ON' : 'OFF') : `${Math.round(input)} W`;
+  const m = controlMessage(WOKWI_CONTROL[kind], input);
+  if (!m) {
+    log(`(Wokwi control "${kind}" not configured, would set it ${label})`);
     return false;
   }
-  publish(topics.wokwiControl(ctl.topic), on ? ctl.on : ctl.off);
-  log(`Wokwi control ${kind} -> ${on ? 'ON' : 'OFF'}`);
+  publish(topics.wokwiControl(m.sub), m.payload);
+  log(`Wokwi control ${kind} -> ${label}`);
   return true;
 }
 

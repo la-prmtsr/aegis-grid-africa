@@ -7,6 +7,8 @@ import { startMqtt, simControl, meterOnline } from '../lib/mqtt.js';
 import { startChain, connectWallet, resumeWallet, useWallet, disconnectWallet, hasWallet, tx, isAddress, same, explain } from '../lib/chain.js';
 import { getSession, clearSession, initials, maskPhone, METHOD_LABEL } from '../lib/session.js';
 import { money, wh, watts, pct, gapPct, clock, simClock, impact, short, shortHash, esc } from '../lib/format.js';
+import { receiptHTML as tradeReceiptHTML, receiptNav, mountReceiptDrawer } from './receipt.js';
+import { ctlHead, syncEngineSwitch, chooseEngine, ctlSliders, ctlToggles, ctlFoot, metricsHTML, quickHTML } from './control-room.js';
 
 const session = getSession() || { name: 'Guest', method: 'guest' };
 /** Greet the signed-in person; guests get a neutral greeting. */
@@ -25,6 +27,7 @@ const ui = {
   mode: localGet('aegis.mode', 'buyer'),
   busy: null, // name of the wallet action in progress
   momo: null, // simulated MoMo checkout step: null | 'confirm' | 'prompt' | 'processing' | 'declined'
+  receiptId: null, // operator Mobile money: trade whose receipt is shown (null = newest)
   page: null, // sidebar page shown in the current view (one page at a time, kept in the URL hash)
 };
 function localGet(k, d) { try { return localStorage.getItem(k) || d; } catch { return d; } }
@@ -40,7 +43,7 @@ const NAV = {
   buyer: [['b-home', 'Get power'], ['b-history', 'Receipts'], ['b-impact', 'Impact']],
   seller: [['s-node', 'Battery'], ['s-earn', 'Earnings'], ['s-meter', 'Meter']],
   gate: [['g-main', 'Start']],
-  ops: [['o-overview', 'Overview'], ['o-grid', 'Microgrid'], ['o-oracle', 'Oracle'], ['o-momo', 'Mobile money'], ['o-chain', 'Escrow']],
+  ops: [['o-overview', 'Overview'], ['o-grid', 'Control room'], ['o-oracle', 'Oracle'], ['o-momo', 'Mobile money'], ['o-chain', 'Escrow']],
 };
 const ICON = {
   'b-home': '<path d="M13 2 4 14h7l-1 8 9-12h-7l1-8Z"/>',
@@ -52,7 +55,7 @@ const ICON = {
   'g-main': '<path d="M12 5v14M5 12h14"/>',
   'o-overview': '<rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>',
   'o-demo': '<circle cx="12" cy="12" r="9"/><path d="m10 8 6 4-6 4V8Z"/>',
-  'o-grid': '<circle cx="5" cy="12" r="2.5"/><circle cx="19" cy="12" r="2.5"/><path d="M7.5 12h9"/><path d="M12 4v4M10 6h4"/>',
+  'o-grid': '<path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/>',
   'o-oracle': '<path d="M12 2 4 5v6c0 5.5 3.4 9.7 8 11 4.6-1.3 8-5.5 8-11V5l-8-3Z"/><path d="m9 12 2 2 4-4"/>',
   'o-chain': '<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
   'o-momo': '<rect x="2" y="6" width="20" height="13" rx="2.5"/><path d="M2 10h20"/><path d="M6 15h4"/>',
@@ -97,6 +100,7 @@ function viewKey() {
 const $ = (id) => document.getElementById(id);
 const main = $('main'), side = $('topnav'), tabbar = $('tabbar'); // side = the page nav, now centred in the top bar
 let toastT;
+const receipts = mountReceiptDrawer((id) => { ui.receiptId = id; render(); });
 function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.add('on'); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('on'), 3200); }
 
 const SELLER_STATUS = { IDLE_GRID: 'Grid on, idle', CHARGING: 'Charging from solar', BATTERY_FULL: 'Full, solar curtailed', ISLAND: 'Islanded, battery standing by', EXPORTING: 'Selling to the shop', WAIT_OUTAGE: 'Trade open, waiting for outage', SOC_FLOOR: 'At the 5% reserve' };
@@ -633,20 +637,24 @@ function gateParts() {
 // ================================================================== OPERATOR
 function opsSkeleton() {
   return `
-  <div class="page-h"><div><h1>Network <span>overview</span></h1><p>Site <span class="mono">${esc(SITE)}</span> · escrow <a class="ext" href="${addrUrl(CHAIN.escrow)}" target="_blank" rel="noopener">${short(CHAIN.escrow)}</a></p></div></div>
   <div data-part="o-notice"></div>
   <div class="view" data-view="o-overview">
     <section class="bento" data-part="o-kpis"></section>
     <section class="grid g-main">
       <div class="panel chart"><div class="ph"><h2>Power on the microgrid</h2><small>Live telemetry, last 5 minutes</small></div><div data-part="o-chart"></div>
         <div class="legend"><span><i style="background:#F59E0B"></i>Solar</span><span><i style="background:#16A34A"></i>Battery → shop</span><span><i style="background:#2563EB"></i>Shop received</span><span><i style="background:#E5484D"></i>Curtailed / unserved</span><span><i style="background:#FEE2E2"></i>Outage</span></div></div>
-      <div class="panel demo" data-part="o-demo"></div>
+      <div class="panel" data-part="o-quick"></div>
     </section>
   </div>
   <div class="view" data-view="o-grid">
-    <section class="grid g-main">
-      <div class="panel diagram" data-part="o-grid"></div>
-      <div class="panel demo" data-part="o-demo"></div>
+    <section class="grid g-ctl">
+      <div class="panel demo cr-ctl">
+        <div class="ph cr-head"><div class="cr-title" data-part="o-ctl-head"></div><div class="cr-engine" data-engine></div></div>
+        <div class="cr-sliders" data-part="o-ctl-sliders"></div>
+        <div data-part="o-ctl-toggles"></div>
+        <div data-part="o-ctl-foot"></div>
+      </div>
+      <div class="panel cr-metrics" data-part="o-metrics"></div>
     </section>
   </div>
   <div class="view" data-view="o-oracle">
@@ -682,27 +690,20 @@ function opsParts() {
 
   patch('o-chart', chartSVG());
 
-  const s = state.seller, b = state.buyer;
-  const day = s ? Number(s.pvW) > 0 : true;
-  const tg = (act, label, sub, on, danger) => `<button class="tg ${danger ? 'danger' : ''}" type="button" data-act="${act}" aria-pressed="${on}"><span>${label}<small>${sub}</small></span><i></i></button>`;
-  patch('o-demo', `<div class="ph"><h2>Demo control</h2><span class="pill blue">via backend</span></div>
-    <div class="toggles">
-      ${tg('t-outage', 'Load shedding', state.grid ? state.grid.toLowerCase() : 'unknown', state.grid === 'OUTAGE', true)}
-      ${tg('t-day', 'Daylight', s ? `solar ${watts(s.pvW)}` : 'no data', day)}
-      ${tg('t-request', 'Shop requests power', b ? (b.requesting ? 'requesting' : 'idle') : 'no data', !!b?.requesting)}
-      ${tg('t-tamper', 'Tamper buyer meter', b ? (b.tamper ? 'reports 40% less' : 'honest') : 'no data', !!b?.tamper, true)}
-    </div>
-    <label style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:12px;font-size:13.5px;color:var(--muted)">Shop load
-      <span class="stepper"><button type="button" data-act="load-down" aria-label="Less load">−</button><b class="mono" style="color:var(--ink)">${watts(b?.loadW)}</b><button type="button" data-act="load-up" aria-label="More load">+</button></span></label>
-    <p class="note">Requests go to <span class="mono">aegis-grid/${esc(SITE)}/app/request</span>, the rest to <span class="mono">app/demo</span>. The backend forwards them to Wokwi when the control format is configured; tamper acts on Meter B; daylight and shop load act on the Wokwi mock only (with the real Wokwi use its potentiometers). Try: load shedding on → shop requests → wait → request off. Turn tamper on first to see a dispute.</p>`);
-
-  patch('o-grid', microgridSVG());
+  // control room (bridge/src/v2 + Faras's Stage 4E): see control-room.js
+  patch('o-quick', quickHTML());
+  patch('o-ctl-head', ctlHead());
+  syncEngineSwitch(document.querySelectorAll('[data-engine]'));
+  patch('o-ctl-sliders', ctlSliders());
+  patch('o-ctl-toggles', ctlToggles());
+  patch('o-ctl-foot', ctlFoot());
+  patch('o-metrics', metricsHTML());
 
   const oracle = list.slice(0, 12);
-  patch('o-oracle-sub', `tolerance ${pct(T?.toleranceBps ?? 300)} · ${list.length} trades`);
+  patch('o-oracle-sub', `tolerance ${pct(T?.toleranceBps ?? 300)} · ${list.length} trades · click a trade for its receipt`);
   const isOwner = same(state.wallet?.address, T?.owner);
   patch('o-oracle', !list.length ? (state.historyLoaded ? '<p class="empty">No trades yet.</p>' : '<p class="empty">Loading trades from the contract…</p>') :
-    `<div class="tbl-wrap"><table><thead><tr><th>Trade</th><th>Opened</th><th class="num">Seller (Wh)</th><th class="num">Buyer (Wh)</th><th class="num">Gap</th><th>Result</th><th>Tx</th><th>Action</th></tr></thead><tbody>
+    `<div class="tbl-wrap"><table><thead><tr><th>Trade</th><th>Opened</th><th class="num">Seller (Wh)</th><th class="num">Buyer (Wh)</th><th class="num">Gap</th><th>Result</th><th>Tx</th><th>Action</th><th><span class="sr-only">Receipt</span></th></tr></thead><tbody>
     ${oracle.map((t) => {
       const { sellerWh, buyerWh } = readingsOf(t);
       const gap = sellerWh != null && buyerWh != null ? gapPct(sellerWh, buyerWh) : null;
@@ -712,12 +713,12 @@ function opsParts() {
         ? `<form class="form" data-form="resolve" data-id="${t.id}" style="margin:0"><input name="wh" inputmode="numeric" value="${buyerWh ?? ''}" aria-label="Accepted Wh for trade ${t.id}" style="flex:1 1 70px;padding:7px 8px"><button class="btn btn-dark btn-sm" type="submit">Resolve</button></form>`
         : `<span class="muted" style="font-size:12.5px">owner resolves</span>`;
       else if (t.status === 'Open' && expired) action = `<button class="btn btn-line btn-sm" type="button" data-act="refund" data-id="${t.id}">Refund buyer</button>`;
-      return `<tr class="${t.status === 'Disputed' ? 'flag' : ''}"><td data-label="Trade" class="mono">#${t.id}</td><td data-label="Opened">${clock(t.openTime)}</td>
+      return `<tr class="${t.status === 'Disputed' ? 'flag' : ''} rc-link" data-act="receipt" data-id="${t.id}" tabindex="0" title="Open the receipt of trade #${t.id}"><td data-label="Trade" class="mono">#${t.id}</td><td data-label="Opened">${clock(t.openTime)}</td>
         <td data-label="Seller (Wh)" class="num">${sellerWh ?? '–'}</td><td data-label="Buyer (Wh)" class="num">${buyerWh ?? '–'}</td>
         <td data-label="Gap" class="num" style="color:${gap != null && gap > (T?.toleranceBps ?? 300) / 100 ? 'var(--alert)' : 'inherit'}">${gap == null ? '–' : gap.toFixed(1) + '%'}</td>
         <td data-label="Result"><span class="pill ${STATUS_PILL[t.status] || 'idle'}">${t.status === 'Settled' && t.disputed ? 'Resolved' : t.status}</span></td>
         <td data-label="Tx">${(t.settleTx || t.openTx) ? `<a class="ext" href="${txUrl(t.settleTx || t.openTx)}" target="_blank" rel="noopener">${shortHash(t.settleTx || t.openTx)}</a>` : '–'}</td>
-        <td data-label="Action">${action}</td></tr>`;
+        <td data-label="Action">${action}</td><td class="rc-go" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></td></tr>`;
     }).join('')}</tbody></table></div>`);
 
   patch('o-escrow', `<div class="ph"><h2>Escrow contract</h2><span class="pill ${T?.paused ? 'bad' : 'ok'}">${T ? (T.paused ? 'Paused' : 'Active') : '–'}</span></div>
@@ -735,6 +736,11 @@ function opsParts() {
   if (state.wallet && !accts.some(([, a]) => same(a, state.wallet.address))) accts.push(['Your wallet', state.wallet.address]);
   const ledger = list.flatMap((t) => momoForTrade(t, shareBps()).filter((r) => r.status !== 'PENDING'));
   const tot = (k, st) => ledger.filter((r) => r.kind === k && (!st || r.status === st)).reduce((a, r) => a + (r.amount || 0), 0);
+  // receipt drawer (opened from an Oracle row): the trade picked, else the newest one
+  const rcTrade = list.find((t) => t.id === ui.receiptId) || list[0];
+  patch('o-rc-head', receiptNav(list, rcTrade?.id));
+  patch('o-receipt', tradeReceiptHTML(rcTrade, rcTrade ? readingsOf(rcTrade) : {}, { shares: shareBps(), tolPct: (T?.toleranceBps ?? 300) / 100, lossPct: 2, txUrl, clock }));
+
   patch('o-momo', `<div class="ph"><h2>Mobile money ledger</h2><span class="pill sim">Simulated MoMo</span></div>
     <div class="kpis" style="margin-bottom:12px">
       <div class="kpi"><span>Collected (deposits)</span><b style="font-size:18px">${usd(tot('deposit'))}</b></div>
@@ -785,33 +791,12 @@ function chartSVG() {
     <circle cx="${x(last.t)}" cy="${y(last.exportW)}" r="4" fill="#16A34A"/><circle cx="${x(last.t)}" cy="${y(last.importW)}" r="3.5" fill="#2563EB"/></svg>`;
 }
 
-function microgridSVG() {
-  const s = state.seller, b = state.buyer;
-  const outage = state.grid === 'OUTAGE';
-  const flowing = s && Number(s.exportW) > 0.1;
-  const soc = s ? Number(s.socBps) / 10000 : 0;
-  const box = (x, title, lines, color) => `<rect x="${x}" y="62" width="196" height="100" rx="14" fill="#fff" stroke="${color}" stroke-width="2"/>
-    <text x="${x + 14}" y="86" font-size="13" font-weight="700" fill="#0E1B2C" font-family="Plus Jakarta Sans, sans-serif">${title}</text>
-    ${lines.map((l, i) => `<text x="${x + 14}" y="${107 + i * 18}" font-size="12" fill="#5A6B80" font-family="IBM Plex Mono, monospace">${esc(l)}</text>`).join('')}`;
-  return `<div class="ph"><h2>Street microgrid</h2><span class="pill ${outage ? 'bad' : 'ok'}">${outage ? 'Islanded · load shedding' : state.grid ? 'Connected to utility grid' : 'Unknown'}</span></div>
-  <svg viewBox="0 0 640 210" role="img" aria-label="Meter A sends energy over line L1 to meter B">
-    <rect x="270" y="8" width="100" height="30" rx="8" fill="${outage ? '#FEE2E2' : '#DCFCE7'}"/><text x="320" y="28" text-anchor="middle" font-size="12" font-weight="600" fill="${outage ? '#C2272D' : '#15803D'}" font-family="Plus Jakarta Sans, sans-serif">Utility ${outage ? 'off' : 'on'}</text>
-    <line x1="320" y1="38" x2="320" y2="${outage ? 44 : 112}" stroke="${outage ? '#E5484D' : '#94A3B8'}" stroke-width="3" ${outage ? 'stroke-dasharray="4 4"' : ''}/>
-    ${outage ? '<text x="320" y="58" text-anchor="middle" font-size="11" fill="#C2272D" font-family="IBM Plex Mono, monospace">islanding switch open</text>' : ''}
-    ${box(24, 'Meter A · Seller', [s ? `battery ${(soc * 100).toFixed(1)}%` : 'offline', s ? `solar ${Math.round(s.pvW)} W` : '', s ? (SELLER_STATUS[s.status] || s.status) : ''], meterOnline(METER.seller) ? '#16A34A' : '#CBD5E1')}
-    <rect x="38" y="150" width="168" height="6" rx="3" fill="#EEF2F6"/><rect x="38" y="150" width="${168 * soc}" height="6" rx="3" fill="#22C55E"/>
-    ${box(420, 'Meter B · Buyer', [b ? `load ${Math.round(b.loadW)} W` : 'offline', b ? `received ${Math.round(b.importW)} W` : '', b ? (BUYER_STATUS[b.status] || b.status) : ''], meterOnline(METER.buyer) ? '#2563EB' : '#CBD5E1')}
-    <line x1="220" y1="112" x2="420" y2="112" stroke="${flowing ? '#16A34A' : '#CBD5E1'}" stroke-width="4" ${flowing ? 'stroke-dasharray="10 8"' : ''}>${flowing ? '<animate attributeName="stroke-dashoffset" from="36" to="0" dur="0.8s" repeatCount="indefinite"/>' : ''}</line>
-    <text x="320" y="134" text-anchor="middle" font-size="11.5" fill="#0E1B2C" font-family="IBM Plex Mono, monospace">line L1 · ${flowing ? `${Math.round(s.exportW)} W` : 'idle'}${s?.tradeId ? ` · trade #${s.tradeId}` : ''}</text>
-    <text x="320" y="198" text-anchor="middle" font-size="11.5" fill="#5A6B80" font-family="Plus Jakarta Sans, sans-serif">Both meters sign their final reading · the bridge submits them to the escrow</text>
-  </svg>`;
-}
-
 // ------------------------------------------------------------------ actions
 main.addEventListener('click', async (e) => {
   const btn = e.target.closest('[data-act]');
   if (!btn || btn.disabled) return;
   const act = btn.dataset.act;
+  if (act === 'receipt' && btn.tagName === 'TR' && e.target.closest('a, form, input, button')) return;
   const s = state.seller, b = state.buyer;
   const sim = (patchObj, msg) => { if (simControl(patchObj)) { if (msg) toast(msg); } else toast('Not connected to MQTT yet.'); };
   switch (act) {
@@ -835,6 +820,11 @@ main.addEventListener('click', async (e) => {
     case 't-day': return sim({ pvW: s && Number(s.pvW) > 0 ? 0 : 800 });
     case 't-request': return sim({ requesting: !b?.requesting });
     case 't-tamper': return sim({ tamper: !b?.tamper }, !b?.tamper ? 'Buyer meter will under-report by 40%.' : 'Buyer meter honest again.');
+    case 't-backup': return sim({ backup: !s?.backupAllowed }, !s?.backupAllowed ? 'Emergency backup on: community loads may use the battery.' : 'Emergency backup off: the battery serves the shop only.');
+    case 'engine-mock': chooseEngine('mock'); syncEngineSwitch(document.querySelectorAll('[data-engine]')); return sim({ engine: 'mock' }, 'Source: mock. The Wokwi-compatible mock publishes again.');
+    case 'engine-wokwi': chooseEngine('wokwi'); syncEngineSwitch(document.querySelectorAll('[data-engine]')); return sim({ engine: 'wokwi' }, 'Mock paused. Waiting for telemetry from the real Wokwi…');
+    case 'go-control': return go('o-grid');
+    case 'receipt': ui.receiptId = Number(btn.dataset.id); render(); return receipts.open();
     case 'load-up': return sim({ shopLoadW: Math.min(600, Number(b?.loadW ?? 300) + 50) });
     case 'load-down': return sim({ shopLoadW: Math.max(0, Number(b?.loadW ?? 300) - 50) });
     case 'as-ama': ui.persona = 'ama'; ui.mode = 'buyer'; save(); return render();
@@ -844,6 +834,28 @@ main.addEventListener('click', async (e) => {
     case 'refund': return walletAction('refund', () => tx.refundExpired(btn.dataset.id), `Trade #${btn.dataset.id} refunded to the buyer.`);
     default: return undefined;
   }
+});
+
+// Oracle rows open the receipt drawer: also with Enter / Space for keyboard users.
+main.addEventListener('keydown', (e) => {
+  const tr = e.target.closest?.('tr.rc-link');
+  if (tr && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); tr.click(); }
+});
+
+// Control room sliders: show the value while dragging, send it when released.
+main.addEventListener('input', (e) => {
+  const r = e.target.closest('input[type="range"][data-ctl]');
+  if (!r) return;
+  const out = document.getElementById(`${r.id}-out`);
+  if (out) out.textContent = `${r.value} W`;
+  r.setAttribute('aria-valuetext', `${r.value} watts`);
+});
+main.addEventListener('change', (e) => {
+  const r = e.target.closest('input[type="range"][data-ctl]');
+  if (!r) return;
+  const ok = simControl({ [r.dataset.ctl]: Number(r.value) });
+  toast(ok ? `${r.dataset.ctl === 'pvW' ? 'PV production' : 'Community load'} set to ${r.value} W.` : 'Not connected to MQTT yet.');
+  r.blur(); // let live telemetry refresh the slider again
 });
 
 main.addEventListener('submit', (e) => {
