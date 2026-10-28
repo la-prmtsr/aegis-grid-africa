@@ -19,3 +19,4 @@ firmware/test/build/
 # os / editors
 .DS_Store
 Thumbs.db
+web/dist/

@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#EAF4FF">
+<meta name="description" content="Aegis-Grid Africa turns neighbourhood batteries into one virtual power plant: they store wasted noon solar and sell it peer to peer during load shedding, paid with mobile money and settled by an escrow contract on Base.">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<title>Aegis-Grid Africa · One Day on the Grid</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="/src/landing/landing.css">
+</head>
+<body>
+
+<canvas id="scene" aria-hidden="true"></canvas>
+<div class="veil" id="veil"></div>
+
+<nav>
+  <div class="navbar">
+    <a class="brand" href="#c0">
+      <svg viewBox="4.6 8.0 230.8 220.0" aria-hidden="true"><g stroke="#F5B91A" stroke-width="16" stroke-linecap="round"><line x1="33.40" y1="90.00" x2="12.61" y2="78.00"/><line x1="70.00" y1="53.40" x2="58.00" y2="32.61"/><line x1="120.00" y1="40.00" x2="120.00" y2="16.00"/><line x1="170.00" y1="53.40" x2="182.00" y2="32.61"/><line x1="206.60" y1="90.00" x2="227.39" y2="78.00"/></g><path d="M40 140A80 80 0 0 1 200 140Z" fill="#F5B91A"/><path d="M40 140A80 80 0 0 0 200 140Z" fill="#111A2B"/><g stroke="#17A348" stroke-width="14" stroke-linecap="round"><line x1="61.0" y1="166" x2="179.0" y2="166"/><line x1="77.0" y1="188" x2="163.0" y2="188"/><line x1="95.0" y1="208" x2="145.0" y2="208"/></g></svg>
+      <span>Aegis<span style="color:#17A348">–Grid</span></span>
+    </a>
+    <div class="links"><a href="#c1">How it works</a><a href="#c2">The problem</a><a href="#c5">Blackout</a><a href="#c10">Impact</a></div>
+    <a class="nav-login" href="./auth.html#login" data-auth="login">Log in</a>
+    <a class="btn btn-dark" href="./auth.html#signup" data-auth="signup">Sign up</a>
+  </div>
+</nav>
+<div class="rail" aria-label="Quick navigation">
+  <a class="r-logo" href="#c0" data-tip="Back to the start" aria-label="Back to the start"><svg viewBox="4.6 8.0 230.8 220.0" aria-hidden="true"><g stroke="#F5B91A" stroke-width="16" stroke-linecap="round"><line x1="33.40" y1="90.00" x2="12.61" y2="78.00"/><line x1="70.00" y1="53.40" x2="58.00" y2="32.61"/><line x1="120.00" y1="40.00" x2="120.00" y2="16.00"/><line x1="170.00" y1="53.40" x2="182.00" y2="32.61"/><line x1="206.60" y1="90.00" x2="227.39" y2="78.00"/></g><path d="M40 140A80 80 0 0 1 200 140Z" fill="#F5B91A"/><path d="M40 140A80 80 0 0 0 200 140Z" fill="#111A2B"/><g stroke="#17A348" stroke-width="14" stroke-linecap="round"><line x1="61.0" y1="166" x2="179.0" y2="166"/><line x1="77.0" y1="188" x2="163.0" y2="188"/><line x1="95.0" y1="208" x2="145.0" y2="208"/></g></svg></a>
+  <a href="#c1" data-tip="How it works" aria-label="How it works" data-from="1" data-to="3"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg></a>
+  <a href="#c2" data-tip="The problem" aria-label="The problem" data-from="2" data-to="2"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg></a>
+  <a href="#c5" data-tip="Blackout" aria-label="Blackout" data-from="4" data-to="7"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg></a>
+  <a href="#c10" data-tip="Impact" aria-label="Impact" data-from="8" data-to="10"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.5 19 2c1 2 2 4.2 2 8 0 5.5-4.8 10-10 10Z"/><path d="M2 21c0-3 1.9-5.4 5.1-6"/></svg></a>
+  <a class="r-dash" href="./auth.html#login" data-tip="Log in" aria-label="Log in" data-auth="rail"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg></a>
+</div>
+
+<main>
+  <section class="chapter hero" id="c0" data-ch="0">
+    <div class="inner">
+      <span class="eyebrow"><i></i>05:45 · Accra, Ghana</span>
+      <h1>Less solar wasted. <span>Less diesel burned.</span></h1>
+      <p class="lede">Aegis-Grid turns household batteries into one virtual power plant. They store the solar power wasted at noon, then sell it to the shop next door when load shedding hits, paid with mobile money and settled by a smart contract.</p>
+      <div class="cta">
+        <a class="btn btn-green" href="#c1">Follow one day on the grid ↓</a>
+        <a class="btn btn-ghost" href="./auth.html#signup" data-auth="signup">Get started</a>
+      </div>
+      <div class="scroll-cue" aria-hidden="true"><i></i>Scroll to start the day</div>
+    </div>
+  </section>
+
+  <section class="chapter" id="c1" data-ch="1">
+    <div class="inner"><div class="card">
+      <span class="eyebrow aegis"><i></i>07:00 · Onboarding</span>
+      <h2>A battery owner joins with just a phone number.</h2>
+      <p>A smart meter is fitted between the home's hybrid inverter and its battery. The owner signs in with MTN MoMo: no seed phrase, no gas fees. The battery is registered on-chain as a storage node, and this household becomes a seller.</p>
+      <div class="facts"><span class="fact">ESP32 + ACS712</span><span class="fact">ATECC608A signed</span><span class="fact">ERC-4337 account</span></div>
+    </div></div>
+  </section>
+
+  <section class="chapter" id="c2" data-ch="2">
+    <div class="inner"><div class="card">
+      <span class="eyebrow problem"><i></i>12:00 · The problem</span>
+      <h2>At noon the sun makes more power than anyone can use.</h2>
+      <p>Community solar peaks while home batteries are small, and there is no market to trade the surplus. So the extra energy is curtailed: clean power that was produced, paid for, then thrown away.</p>
+      <div class="facts"><span class="fact">Solar curtailment</span><span class="fact">No P2P market</span></div>
+    </div></div>
+  </section>
+
+  <section class="chapter" id="c3" data-ch="3">
+    <div class="inner"><div class="card">
+      <span class="eyebrow aegis"><i></i>12:30 · Smart surplus charge</span>
+      <h2>Aegis stores the surplus instead of wasting it.</h2>
+      <p>The digital twin spots surplus on the local feeder and signals the seller's meter. The battery charges at the cheapest rate of the day, then stops at 80% so it stays healthy for years.</p>
+      <div class="facts"><span class="fact">Digital twin</span><span class="fact">DOD 20–80%</span><span class="fact">Degradation fee</span></div>
+    </div></div>
+  </section>
+
+  <section class="chapter" id="c4" data-ch="4">
+    <div class="inner"><div class="card">
+      <span class="eyebrow problem"><i></i>17:30 · Peak load</span>
+      <h2>Everyone comes home. The grid starts to strain.</h2>
+      <p>Lights, fans and fridges switch on across the city at once. The grid cannot meet the evening peak, so the utility schedules load shedding for this feeder from 19:00.</p>
+      <div class="facts"><span class="fact">Evening peak</span><span class="fact">Load shedding at 19:00</span></div>
+    </div></div>
+  </section>
+
+  <section class="chapter" id="c5" data-ch="5">
+    <div class="inner"><div class="card">
+      <span class="eyebrow problem"><i></i>19:00 · Load shedding</span>
+      <h2>The lights go out, and the generators start.</h2>
+      <p>Down the street, a small shop keeps cold drinks and fish in a freezer. Without power the stock spoils, so the owner starts a diesel generator. Black smoke and noise fill the street where children play.</p>
+      <div class="facts"><span class="fact">PM2.5</span><span class="fact">CO₂</span><span class="fact">Noise</span></div>
+    </div></div>
+  </section>
+
+  <section class="chapter" id="c6" data-ch="6">
+    <div class="inner"><div class="card">
+      <span class="eyebrow aegis"><i></i>19:02 · Request clean power</span>
+      <h2>With Aegis, the shop owner taps one button instead.</h2>
+      <p>The buyer requests clean power and leaves a small MoMo deposit. Aegis looks for stored energy on the same transformer, within 500 m, to keep cable losses low. It finds the seller's battery 180 m away, full and ready.</p>
+      <div class="facts"><span class="fact">Locational matching</span><span class="fact">&lt; 500 m</span><span class="fact">Same transformer</span></div>
+    </div></div>
+  </section>
+
+  <section class="chapter" id="c7" data-ch="7">
+    <div class="inner"><div class="card">
+      <span class="eyebrow aegis"><i></i>19:03 · Peer-to-peer discharge</span>
+      <h2>A neighbour's battery keeps the shop open.</h2>
+      <p>The seller's hybrid inverter turns stored DC into 230 V AC and sends it down the street cable to the shop. The freezer hums again. The generator stays off, and the battery never drops below 20%.</p>
+      <div class="facts"><span class="fact">230 V AC</span><span class="fact">Hybrid inverter</span><span class="fact">No diesel</span></div>
+    </div></div>
+  </section>
+
+  <section class="chapter" id="c8" data-ch="8">
+    <div class="inner"><div class="card">
+      <span class="eyebrow chain"><i></i>21:00 · Dual-node verification</span>
+      <h2>Two meters agree on every kilowatt-hour.</h2>
+      <p>The seller's meter counts the energy that left. The buyer's meter counts the energy that arrived. Both sign their readings in hardware and exchange them over LoRa, even with the mobile network down. Nobody can fake a kilowatt-hour.</p>
+      <div class="facts"><span class="fact">kWh out vs kWh in</span><span class="fact">LoRa mesh</span><span class="fact">Offline signatures</span></div>
+    </div></div>
+  </section>
+
+  <section class="chapter" id="c9" data-ch="9">
+    <div class="inner"><div class="card">
+      <span class="eyebrow chain"><i></i>21:01 · Settlement</span>
+      <h2>The escrow pays everyone in one transaction.</h2>
+      <p>When the two readings agree within 3%, the smart contract on Base pays only for the energy the shop actually received. The seller gets 83%, the utility keeps a 15% grid fee for its cables, and Aegis takes 2%. Any unused deposit goes straight back to the buyer.</p>
+      <div class="facts"><span class="fact">Base escrow</span><span class="fact">3% tolerance</span><span class="fact">Pull payment</span></div>
+    </div></div>
+  </section>
+
+  <section class="chapter" id="c10" data-ch="10">
+    <div class="inner"><div class="card">
+      <span class="eyebrow aegis"><i></i>23:00 · Proof of impact</span>
+      <h2>A quiet street, clean air, and power that was never wasted.</h2>
+      <p>Every trade is recorded on-chain with the diesel it replaced. Noon sunshine became evening light, the seller earned, the buyer saved, and nobody built a new power station to make it happen.</p>
+      <div class="facts"><span class="fact">Diesel avoided</span><span class="fact">CO₂ offset</span><span class="fact">On-chain record</span></div>
+    </div></div>
+  </section>
+</main>
+
+<section class="closing" id="join">
+  <div class="inner"><div class="wrap">
+    <span class="eyebrow aegis"><i></i>Who wins</span>
+    <h2>Every party in the trade comes out ahead.</h2>
+    <p class="intro">Aegis-Grid turns idle home batteries into shared grid infrastructure. Everyone involved earns or saves something, and nobody has to lose money for it to work.</p>
+    <div class="who">
+      <article>
+        <span class="tag">Utility</span><h3>Government &amp; power company</h3><p class="role">Supplies the grid and noon surplus</p>
+        <ul><li>No need to build large battery storage</li><li>Earns from solar that used to be curtailed</li><li>Fewer blackouts with no extra operating cost</li></ul>
+      </article>
+      <article>
+        <span class="tag">Seller</span><h3>Battery owners</h3><p class="role">Homes with solar and a battery to share</p>
+        <ul><li>Passive income for every kWh delivered</li><li>Battery wear is paid for in the price</li><li>Backup power for their own home</li></ul>
+      </article>
+      <article>
+        <span class="tag">Buyer</span><h3>Small businesses</h3><p class="role">Shops and kiosks that need power in a blackout</p>
+        <ul><li>50–70% cheaper than running diesel</li><li>No fumes, no generator noise</li><li>Pay instantly with Mobile Money</li></ul>
+      </article>
+      <article>
+        <span class="tag">Public</span><h3>The neighborhood</h3><p class="role">Lives and works around the market</p>
+        <ul><li>Far less PM2.5 and CO₂ in the street</li><li>Lower risk of respiratory illness</li><li>Quieter evenings</li></ul>
+      </article>
+    </div>
+    <div class="final">
+      <div>
+        <p>See it for real: a live trade on Base Sepolia, driven by simulated ESP32 meters. Join as a seller or a buyer, or try the demo street.</p>
+        <p class="live-stats" id="liveStats" hidden><i></i><span id="liveText">Reading the contract…</span> <a id="liveLink" target="_blank" rel="noopener">View contract</a></p>
+      </div>
+      <div class="cta">
+        <a class="btn btn-green" href="./auth.html#signup" data-auth="signup">Create your account</a>
+        <a class="btn btn-ghost" href="./console.html?guest" data-auth="guest">Try the demo</a>
+        <a class="btn btn-ghost" href="https://github.com/la-prmtsr/aegis-grid-africa" target="_blank" rel="noopener">View on GitHub</a>
+      </div>
+    </div>
+  </div></div>
+</section>
+
+<!-- HUD -->
+<aside class="hud" aria-live="polite">
+  <div class="panel on" data-p="0">
+    <div class="ph"><span>Neighborhood feeder</span><em class="pill ok">Grid normal</em></div>
+    <div class="big" id="h0solar">0.12<small>MW</small></div>
+    <div class="sub">Community solar output, rising</div>
+    <div class="rows">
+      <div class="row"><span>Batteries online</span><b>38</b></div>
+      <div class="row"><span>Diesel generators running</span><b>0</b></div>
+    </div>
+  </div>
+  <div class="panel" data-p="1">
+    <div class="ph"><span>Aegis app · Sign in</span><em class="pill warn">Step 1 of 3</em></div>
+    <div class="field"><em>+233</em> 24 ··· 1187</div>
+    <button class="btn momo" type="button" tabindex="-1">Continue with MoMo</button>
+    <div class="reg" id="reg"><b>✓ Storage node registered</b>Node A-0142 · 10 kWh LFP · health window 20–80%</div>
+  </div>
+  <div class="panel" data-p="2">
+    <div class="ph"><span>Curtailed today</span><em class="pill bad">Wasted</em></div>
+    <div class="big" id="h2waste" style="color:var(--alert)">0<small>kWh</small></div>
+    <div class="sub">Solar produced but never used</div>
+    <div class="bars" id="bars"></div>
+    <div class="legend"><span>Used</span><span class="w">Curtailed</span></div>
+  </div>
+  <div class="panel" data-p="3">
+    <div class="ph"><span>Seller's battery · Node A</span><em class="pill ok" id="h3state">Charging</em></div>
+    <div class="big" id="h3soc">20<small>%</small></div>
+    <div class="batt"><div class="fill" id="h3fill" style="width:20%"></div>
+      <div class="mark" style="left:20%"></div><div class="mark" style="left:80%"></div>
+      <div class="lbl" style="left:20%">20%</div><div class="lbl" style="left:80%">80% limit</div></div>
+    <div class="rows" style="margin-top:30px">
+      <div class="row"><span>Source</span><b>Feeder surplus</b></div>
+      <div class="row"><span>Charge rate</span><b id="h3kw">3.2 kW</b></div>
+      <div class="row"><span>Curtailment absorbed</span><b id="h3abs">0.0 kWh</b></div>
+    </div>
+  </div>
+  <div class="panel" data-p="4">
+    <div class="ph"><span>Feeder load</span><em class="pill warn" id="h4pill">Peak building</em></div>
+    <div class="big" id="h4load">78<small>% capacity</small></div>
+    <div class="load"><i id="h4mark" style="left:78%"></i></div>
+    <div class="rows" style="margin-top:18px">
+      <div class="row"><span>Load shedding</span><b>19:00 – 23:00</b></div>
+      <div class="row"><span>Seller's battery</span><b>80% · ready</b></div>
+    </div>
+  </div>
+  <div class="panel" data-p="5">
+    <div class="ph"><span>Air at the buyer's shop</span><em class="pill bad" id="h5pill">Generator on</em></div>
+    <div class="big" id="h5pm" style="color:var(--alert)">148<small>µg/m³ PM2.5</small></div>
+    <div class="sub" id="h5sub">Diesel exhaust next to the shop</div>
+    <div class="rows">
+      <div class="row"><span>Grid</span><b>Off · load shedding</b></div>
+      <div class="row"><span>Generator noise</span><b id="h5db">92 dB</b></div>
+    </div>
+    <div class="seg" role="group" aria-label="Compare"><button type="button" data-mode="without">Without Aegis</button><button type="button" data-mode="with">With Aegis</button></div>
+  </div>
+  <div class="panel" data-p="6">
+    <div class="ph"><span>Aegis app · Buyer</span><em class="pill warn" id="h6pill">Searching</em></div>
+    <button class="btn req" type="button" tabindex="-1">⚡ Request clean power</button>
+    <div class="match" id="h6match"><b>✓ Matched with Node A-0142</b>180 m away · same transformer · 1.2 kW available</div>
+    <div class="seg" role="group" aria-label="Compare"><button type="button" data-mode="without">Without Aegis</button><button type="button" data-mode="with">With Aegis</button></div>
+  </div>
+  <div class="panel" data-p="7">
+    <div class="ph"><span>Live P2P session</span><em class="pill ok">Delivering</em></div>
+    <div class="big">1.2<small>kW</small></div>
+    <div class="sub">From the seller's battery to the buyer's shop</div>
+    <div class="rows">
+      <div class="row"><span>Energy delivered</span><b id="h7kwh">0.00 kWh</b></div>
+      <div class="row"><span>Seller's battery</span><b id="h7soc">80%</b></div>
+      <div class="row"><span>Cost vs diesel</span><b style="color:var(--green)">−60%</b></div>
+    </div>
+    <div class="seg" role="group" aria-label="Compare"><button type="button" data-mode="without">Without Aegis</button><button type="button" data-mode="with">With Aegis</button></div>
+  </div>
+  <div class="panel" data-p="8">
+    <div class="ph"><span>Dual-node oracle</span><em class="pill chain" id="h8pill">Verifying</em></div>
+    <div class="meters">
+      <div><span>Meter A · out</span><b>2.47</b><em>signed</em></div><span aria-hidden="true">⇄</span>
+      <div><span>Meter B · in</span><b>2.41</b><em>signed</em></div>
+    </div>
+    <div class="rows">
+      <div class="row"><span>Line loss</span><b>2.4% · under 3%</b></div>
+      <div class="row"><span>Link</span><b>LoRa · internet offline</b></div>
+      <div class="row"><span>Hardware keys</span><b>ATECC608A ✓ ✓</b></div>
+    </div>
+  </div>
+  <div class="panel" data-p="9">
+    <div class="ph"><span>Escrow · Base Sepolia</span><em class="pill chain" id="h9pill">Pending</em></div>
+    <div class="split">
+      <svg viewBox="0 0 100 100" aria-hidden="true">
+        <circle cx="50" cy="50" r="38" fill="none" stroke="#EEF2F6" stroke-width="16"/>
+        <circle cx="50" cy="50" r="38" fill="none" stroke="#3B82F6" stroke-width="16" stroke-dasharray="35.8 203" transform="rotate(-90 50 50)"/>
+        <circle cx="50" cy="50" r="38" fill="none" stroke="#16A34A" stroke-width="16" stroke-dasharray="198.2 40.6" stroke-dashoffset="-35.8" transform="rotate(-90 50 50)"/>
+        <circle cx="50" cy="50" r="38" fill="none" stroke="#F59E0B" stroke-width="16" stroke-dasharray="4.8 234" stroke-dashoffset="-234" transform="rotate(-90 50 50)"/>
+      </svg>
+      <div class="keys">
+        <div><i style="background:#3B82F6"></i>Utility grid fee<b>15%</b></div>
+        <div><i style="background:#16A34A"></i>Seller · battery owner<b>83%</b></div>
+        <div><i style="background:#F59E0B"></i>Aegis platform<b>2%</b></div>
+      </div>
+    </div>
+    <div class="note" id="h9note"><b>MoMo</b> · The seller's 83% lands in their mobile money (simulated)</div>
+  </div>
+  <div class="panel" data-p="10">
+    <div class="ph"><span>Tonight on this feeder</span><em class="pill ok">On-chain</em></div>
+    <div class="big" id="h10l">0.0<small>L diesel avoided</small></div>
+    <div class="rows">
+      <div class="row"><span>CO₂ avoided</span><b id="h10co">0.0 kg</b></div>
+      <div class="row"><span>PM2.5 at the shop</span><b>148 → 12 µg/m³</b></div>
+      <div class="row"><span>Freezer kept running</span><b>4 h</b></div>
+    </div>
+  </div>
+</aside>
+
+<div class="clock">
+  <time id="clock">05:45</time>
+  <div class="dots" role="group" aria-label="Chapters" id="dots"></div>
+</div>
+
+<script type="module" src="/src/landing/main.js"></script>
+</body>
+</html>
