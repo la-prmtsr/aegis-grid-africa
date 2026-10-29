@@ -155,6 +155,10 @@ export class MeterAGateway {
       gap,
       issues,
       wokwiTimeScaleEstimate: this.timeScaleEstimate(),
+      // Stage 5B.2 firmware: METER_A's own cumulative counter for the active trade (live progress, auto-stop)
+      p2pTradeActive: raw.p2p_trade_active === true,
+      p2pTradeId: typeof raw.p2p_trade_id === 'string' ? raw.p2p_trade_id : null,
+      p2pTradeWh: Number.isFinite(raw.p2p_trade_wh) ? raw.p2p_trade_wh : null,
       simulated: true,
     };
     this.last = t;

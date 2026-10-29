@@ -77,6 +77,9 @@ export const STAGE5B = {
   settlementMode: pick('SETTLEMENT_MODE', ['off', 'testnet'], 'off'),
   minSettleWh: num('MIN_SETTLEMENT_WH', 5), // testnet only: below this the whole-Wh rounding hides the gap
   targetW: num('TRADE_TARGET_W', 500), // firmware accepts (0, 500] W
+  // how fast METER_A's trade counter (p2p_trade_wh) runs: 1 = real time (5B.2 firmware), 60 = 1 s counts as 1 min.
+  // Stage 6 sizes orders, the stop point and the escrow margin from it (sizing.js).
+  energyScale: num('FIRMWARE_ENERGY_SCALE', 1),
   finalTimeoutS: num('FINAL_TIMEOUT_S', 30), // how long to wait for both finals after STOP
   modeTopic: env.WOKWI_MODE_TOPIC || 'mode', // relative to demo/control/
   modeRemote: env.WOKWI_MODE_REMOTE || '{"mode":"remote"}', // payload that puts METER_A in REMOTE mode
@@ -102,6 +105,8 @@ const ctrl = (key) => ({
 });
 export const WOKWI_CONTROL = {
   buyer: ctrl('BUYER'), outage: ctrl('OUTAGE'), backup: ctrl('BACKUP'), pv: ctrl('PV'), load: ctrl('LOAD'),
+  // Stage 5B: tamper switch of Faras's METER_B firmware (the backend itself never alters a meter value)
+  tamper: ctrl('TAMPER'),
 };
 
 // Chain settings are read lazily, so the monitoring parts run without a wallet.

@@ -86,8 +86,9 @@ export const meterOnline = (id) => Date.now() - (state.lastSeen[id] || 0) < 5000
  */
 export function simControl(patch) {
   if (!client || !client.connected) return false;
-  const { requesting, ...demo } = patch;
-  if (typeof requesting === 'boolean') client.publish(topics.appRequest, JSON.stringify({ requesting }), { qos: 1 });
+  const { requesting, targetWh, ...demo } = patch;
+  // Stage 6: a request carries the buyer's order (Wh to receive); the backend sizes the escrow from it
+  if (typeof requesting === 'boolean') client.publish(topics.appRequest, JSON.stringify(requesting && targetWh ? { requesting, targetWh } : { requesting }), { qos: 1 });
   if (Object.keys(demo).length) client.publish(topics.appDemo, JSON.stringify(demo), { qos: 1 });
   return true;
 }

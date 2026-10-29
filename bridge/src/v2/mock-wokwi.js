@@ -13,7 +13,7 @@
 // {"op":"start","tradeId":"<id>","targetW":W} / {"op":"stop","tradeId":"<id>"}. On stop (or at the battery
 // reserve) it publishes the UNSIGNED final events on meter/METER_A/final and meter/METER_B/final, counted in
 // real time like the firmware. METER_B is derived from METER_A (2% loss), exactly as in Faras's setup.
-import { SITE, SIM, topics } from './config.js';
+import { SITE, SIM, STAGE5B, topics } from './config.js';
 import { connect, logger } from './mqtt.js';
 
 const log = logger('mock-wokwi');
@@ -27,6 +27,8 @@ let paused = false; // true while the dashboard has switched the source to the r
 let mode = 'local'; // Stage 5B.2: METER_A accepts trade commands only in REMOTE mode
 let trade = null; // { tradeId, targetW, sellerWh, buyerWh }
 let tamper = false; // METER_B tamper switch (in the firmware this is set in Wokwi)
+let lastTradeId = null; // the firmware keeps reporting the last trade's counter after it ends
+let lastTradeWh = 0;
 let batteryWh = CAP_WH * 0.5;
 
 const { publish } = connect('mock-wokwi', [`${topics.wokwiControl('#')}`, topics.appDemo, topics.tradeCmd], (topic, msg) => {
@@ -83,6 +85,8 @@ function onTradeCmd(cmd) {
 function finishTrade(reason) {
   const t = trade;
   trade = null;
+  lastTradeId = t.tradeId;
+  lastTradeWh = Math.round(t.sellerWh * 1e6) / 1e6;
   set({ buyerRequest: false }, 'trade end');
   const socBpsAfter = Math.round((10000 * batteryWh) / CAP_WH);
   // Final events exactly like Faras's firmware: unsigned, simulated, not settlement-eligible. QoS 0, not retained.
@@ -99,7 +103,7 @@ function set(patch, source) {
 let last = Date.now();
 function step() {
   const now = Date.now();
-  const realH = (now - last) / 3_600_000; // the 5B.2 firmware counts trade energy in real time
+  const realH = (now - last) / 3_600_000; // the 5B.2 firmware counts trade energy in real time (FIRMWARE_ENERGY_SCALE=1)
   const dtH = realH * SIM.timeScale;
   last = now;
   if (paused) return; // the real Wokwi is the source; the battery model is frozen meanwhile
@@ -127,8 +131,8 @@ function step() {
   }
   if (trade) {
     const toBuyer = inp.outage ? Math.min(buyerDemand, discharge) : 0;
-    trade.sellerWh += toBuyer * realH;
-    const got = toBuyer * (1 - SIM.lineLoss) * realH;
+    trade.sellerWh += toBuyer * realH * STAGE5B.energyScale;
+    const got = toBuyer * (1 - SIM.lineLoss) * realH * STAGE5B.energyScale;
     trade.buyerWh += tamper ? got * SIM.tamperFactor : got;
     if (inp.outage && trade.sellerWh > 0 && toBuyer < 1 && batteryWh <= minWh + 0.01) setImmediate(() => trade && finishTrade('soc_floor'));
     // METER_B firmware telemetry (v1): the dashboard ignores it, the backend only notes that METER_B is alive
@@ -162,6 +166,10 @@ function step() {
     emergency_backup_allowed: inp.backup,
     pv_delivered_to_microgrid_w: r1(pvDelivered),
     energy_status: energyStatus,
+    // Stage 5B.2 firmware fields: METER_A's cumulative counter for the active trade
+    p2p_trade_active: Boolean(trade),
+    p2p_trade_id: trade ? trade.tradeId : (lastTradeId ?? null),
+    p2p_trade_wh: trade ? Math.round(trade.sellerWh * 1e6) / 1e6 : (lastTradeWh ?? 0),
     sim_source: 'MOCK', // extra field, ignored by the Stage 4E consumers; lets the dashboard show the source
   }, { qos: 0 });
 }
