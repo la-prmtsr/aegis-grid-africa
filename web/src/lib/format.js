@@ -7,7 +7,7 @@ export const shortHash = (h) => (h ? `${h.slice(0, 8)}…${h.slice(-4)}` : '–'
 export function money(wei) {
   if (wei == null) return '–';
   const w = BigInt(wei);
-  if (w === 0n) return '0';
+  if (w === 0n) return '0 gwei';
   if (w < 100_000_000_000_000n) { // < 0.0001 ETH
     const g = Number(w) / 1e9;
     return `${g.toLocaleString('en-US', { maximumFractionDigits: g < 10 ? 2 : 0 })} gwei`;

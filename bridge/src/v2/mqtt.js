@@ -5,8 +5,12 @@ import { MQTT_URL } from './config.js';
 export const time = () => new Date().toLocaleTimeString('en-GB');
 export const logger = (tag) => (...a) => console.log(time(), `[${tag}]`, ...a);
 
-/** Connect, subscribe on every (re)connect, and parse JSON payloads for the handler. */
-export function connect(name, subscriptions, onMessage, log) {
+/**
+ * Connect, subscribe on every (re)connect, and parse JSON payloads for the handler.
+ * opts.raw: hand payloads that are not JSON (Faras's plain controls such as "remote") to the handler as a string
+ * instead of dropping them. A handler error is logged, never fatal.
+ */
+export function connect(name, subscriptions, onMessage, log, opts = {}) {
   const client = mqtt.connect(MQTT_URL, {
     clientId: `aegis-${name}-${Math.random().toString(16).slice(2, 10)}`,
     reconnectPeriod: 2000,
@@ -19,13 +23,20 @@ export function connect(name, subscriptions, onMessage, log) {
   client.on('reconnect', () => log('reconnecting to MQTT ...'));
   client.on('error', (err) => log(`MQTT error: ${err.message}`));
   client.on('message', (topic, payload) => {
+    const text = payload.toString('utf8');
     let msg;
     try {
-      msg = JSON.parse(payload.toString('utf8'));
+      msg = JSON.parse(text);
     } catch {
-      return; // not JSON
+      if (!opts.raw) return; // not JSON
+      msg = text.trim();
     }
-    Promise.resolve(onMessage(topic, msg)).catch((err) => log(`ERROR: ${err.shortMessage ?? err.message}`));
+    const fail = (err) => log(`ERROR on ${topic}: ${err.shortMessage ?? err.message}`);
+    try {
+      Promise.resolve(onMessage(topic, msg)).catch(fail);
+    } catch (err) {
+      fail(err);
+    }
   });
   const publish = (topic, msg, opts = {}) =>
     new Promise((resolve) => client.publish(topic, typeof msg === 'string' ? msg : JSON.stringify(msg), { qos: 1, ...opts }, () => resolve()));

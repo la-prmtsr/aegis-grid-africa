@@ -67,7 +67,7 @@ flowchart LR
 | Tampered buyer meter (contract v1) | 138 vs 81 Wh → **disputed, funds frozen** · [details](docs/evidence.md) |
 | Seller payout | `withdraw()` paid out; a second attempt reverted · [details](docs/evidence.md) |
 | Cost per settlement | ~98k to 184k gas measured on-chain; a dispute costs ~58k |
-| Tests | 26 contract tests · 31 backend tests |
+| Tests | 26 contract tests · 36 backend tests |
 
 ## What is real and what is simulated
 
@@ -83,6 +83,34 @@ flowchart LR
 | Mobile money, phone login | 🔴 Simulated in the UI only; roadmap |
 | Offline LoRa mesh | 🔴 Design only; roadmap |
 
+## Prices and the demo scale
+
+The meters in Wokwi measure a small model of a street. A trade there is **10–100 Wh**, but a real shop needs **1–10 kWh** to get through one load-shedding block. Prices on such small amounts would be fractions of a cent, so the simulated mobile-money layer uses a **demo scale of ×100**:
+
+> **1 Wh measured in the demo = 100 Wh at a real shop.** A 20 Wh order stands for 2 kWh, about 4 hours of a 500 W shop.
+
+| Price | Per kWh | Source / reasoning (October 2026, about GH₵12.25 per US$) |
+|---|---|---|
+| Utility grid, non-residential | ~$0.15 | PURC tariff GH₵1.84/kWh (0–300 kWh), from 1 July 2026 |
+| **Aegis P2P price** | **$0.30** | Demo assumption: the battery owner earns about **2×** the grid price |
+| Small diesel generator (fuel only) | ~$0.47 | Diesel ~GH₵19.30/L ($1.58) × 0.3 L/kWh: the shop pays about **⅓ less** with Aegis |
+
+| Demo order | Real-world energy | Shop pays | Seller receives (83%) | Same energy from a generator |
+|---|---|---|---|---|
+| 10 Wh | 1 kWh | $0.30 | $0.25 | $0.47 |
+| 20 Wh | 2 kWh | $0.60 | $0.50 | $0.94 |
+| 50 Wh | 5 kWh | $1.50 | $1.25 | $2.35 |
+| 100 Wh | 10 kWh | $3.00 | $2.49 | $4.70 |
+
+How it runs:
+
+1. The shop picks an order in measured Wh. The dashboard shows what it stands for ("= 2 kWh at a real shop") and the deposit in US$ (`web/src/lib/momo.js`: `realKWh`, `whToFiat`).
+2. The escrow on Base Sepolia is opened for the **measured** Wh (order + cable loss + stop margin) at 1 gwei per Wh. The scale never touches the chain.
+3. Both meters report measured Wh; the backend and the contract check them (3% tolerance, whole Wh) exactly as before.
+4. After settlement, the receipt shows the measured Wh, the real-world kWh they stand for, and the US$ amounts: the shop pays for what its meter received, the seller gets 83%, the utility 15%, Aegis 2%, and the unused deposit goes back to the shop's MoMo. "Saved vs a diesel generator" and the Impact page use the same real-world energy.
+
+Settings in `web/.env.local`: `VITE_DEMO_ENERGY_SCALE` (default 100), `VITE_P2P_USD_PER_KWH` (0.30) and `VITE_DIESEL_USD_PER_L` (1.58). All three are demo assumptions, and mobile money is simulated: no payment API is called and no real money moves.
+
 ## Quick start
 
 Requires Node.js 20+, [Foundry](https://getfoundry.sh) and Git. On Windows use WSL 2 ([setup guide](docs/dev-setup.md)).
@@ -92,7 +120,7 @@ git clone --recurse-submodules https://github.com/la-prmtsr/aegis-grid-africa.gi
 cd aegis-grid-africa && cp .env.example .env   # testnet keys only, never commit .env
 
 cd contracts && forge test && cd ..           # 26 tests
-cd bridge && npm install && npm test          # 31 tests
+cd bridge && npm install && npm test          # 36 tests
 ```
 
 Run the demo without hardware (needs testnet keys and contract v2 in `.env`, see the [integration guide](docs/integration-v2.md)):
@@ -105,7 +133,7 @@ cd bridge && npm run v2:mock        # verify only; SETTLEMENT_MODE=testnet npm r
 cd web && npm install && npm run dev
 ```
 
-In the dashboard: **Operator → Control room** (PV, load, utility outage, emergency backup, engine Mock or Wokwi live), turn on **Utility outage**, then **Buyer → Request power**, wait, then **Stop and pay**. Turn on **Tamper Meter B** first to see the backend reject a trade. Receipts are in **Operator → Oracle**. Unity only visualises; every control is in the dashboard. Deployment, the Mosquitto bridge for Wokwi and all MQTT topics: [docs/integration-v2.md](docs/integration-v2.md).
+In the dashboard: **Operator → Control room** (PV, load, utility outage, emergency backup, engine Mock or Wokwi live), turn on **Utility outage**, then **Buyer → Get power**, choose an order (10–100 Wh) and pay with MoMo. The supply stops by itself when the order is reached (or press **Stop and pay**). Turn on **Tamper Meter B** first to see the backend reject a trade. Receipts are in **Operator → Oracle**. Unity only visualises; every control is in the dashboard. Deployment, the Mosquitto bridge for Wokwi and all MQTT topics: [docs/integration-v2.md](docs/integration-v2.md).
 
 ## Repository
 
@@ -151,6 +179,8 @@ Signatures are bound to the chain, the contract and the trade, so they cannot be
 | Fee split | 15% utility (grid fee) · 2% platform · rest to the seller |
 | Demo price | 1 gwei per Wh (tiny, so the demo runs on faucet test ETH) |
 | Energy accounting speed | 60× (1 s = 1 simulated minute), checked against the Wokwi battery model at run time |
+| Trade energy counter | Real time in Faras's firmware (`FIRMWARE_ENERGY_SCALE=1`): 500 W gives 20 Wh in about 2.4 min; orders 10–100 Wh |
+| Money | Demo energy scale ×100 at $0.30/kWh, see "Prices and the demo scale" |
 
 </details>
 

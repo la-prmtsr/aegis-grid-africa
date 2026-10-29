@@ -3,19 +3,24 @@
 // same markup. Order-size rules: lib/sizing.js (shared with the backend, checked by a test).
 import { orderSteps, DEFAULT_RATE } from '../lib/sizing.js';
 
-const SHOP_W = 100; // lights, a fan and phone charging in a small shop, to make an order size concrete
+const SHOP_W = 500; // a small shop: lights, a fan, a fridge and phone charging, to make an order size concrete
 
-/** "20 Wh keeps 100 W of lights, a fan and phone charging on for 12 min · delivered at 500 W in about 2.4 min" */
-function orderHint(wh, rate) {
-  const h = wh / SHOP_W;
+/**
+ * "= 2 kWh at a real shop: a 500 W shop runs 4 h · the demo delivers 20 Wh in about 2.4 min"
+ * scale: demo energy scale (MOMO.demoScale), 1 measured Wh = scale Wh at a real shop.
+ */
+function orderHint(wh, rate, scale) {
+  const realWh = wh * scale;
+  const h = realWh / SHOP_W;
   const use = h >= 1 ? `${Math.round(h * 10) / 10} h` : `${Math.round(h * 60)} min`;
   const s = (wh / (rate.powerW * rate.energyScale)) * 3600; // real seconds of supply at the trade power
   const dur = s < 90 ? `${Math.round(s)} s` : `${Math.round((s / 60) * 10) / 10} min`;
-  return `Keeps ${SHOP_W} W of lights, a fan and phone charging on for ${use} · delivered at ${rate.powerW} W in about ${dur}`;
+  const kwh = Math.round((realWh / 1000) * 100) / 100;
+  return `= ${kwh} kWh at a real shop (demo scale ×${scale}): a ${SHOP_W} W shop runs ${use} · the demo delivers ${wh} Wh in about ${dur}`;
 }
 
 /** Order stepper: − / + by 10 Wh, presets, and what the order means in practice. */
-export function orderPickerHTML({ targetWh, maxOrderWh, rate = DEFAULT_RATE, disabled = false }) {
+export function orderPickerHTML({ targetWh, maxOrderWh, rate = DEFAULT_RATE, scale = 1, disabled = false }) {
   const { step, min, presets } = orderSteps(rate);
   const dis = (cond) => (disabled || cond ? 'disabled' : '');
   return `<div class="order" role="group" aria-labelledby="order-l">
@@ -28,18 +33,18 @@ export function orderPickerHTML({ targetWh, maxOrderWh, rate = DEFAULT_RATE, dis
       </div>
     </div>
     <div class="order-presets">${presets.filter((p) => p <= maxOrderWh).map((p) => `<button type="button" data-act="wh-set" data-wh="${p}" aria-pressed="${p === targetWh}" ${dis(false)}>${p} Wh</button>`).join('')}</div>
-    <small class="order-hint">${orderHint(targetWh, { ...DEFAULT_RATE, ...rate })}</small>
+    <small class="order-hint">${orderHint(targetWh, { ...DEFAULT_RATE, ...rate }, scale)}</small>
   </div>`;
 }
 
 /** Idle card: choose the order, see the deposit, request. */
-export function requestCardHTML({ outage, canRequest, targetWh, maxOrderWh, rate, maxWh, depositText, rateText, priceText, generatorText }) {
+export function requestCardHTML({ outage, canRequest, targetWh, maxOrderWh, rate, scale, realText, maxWh, depositText, rateText, priceText, generatorText }) {
   return `<div class="req-card"><div class="ph"><h2>Request clean power</h2></div>
     <p style="margin:0;color:var(--muted)">${outage
       ? 'Buy energy from a seller\'s battery on your street. Choose how much you need. You pay a small deposit with mobile money, and you are charged only for the energy your meter receives. The rest comes back to your MoMo.'
       : 'Available during load shedding.'}</p>
-    ${orderPickerHTML({ targetWh, maxOrderWh, rate, disabled: !outage })}
-    <div class="momo-quote"><span>Deposit for ${targetWh} Wh</span><b>${depositText}</b><small>You pay about ${priceText} for ${targetWh} Wh at ${rateText}/kWh (a diesel generator: about ${generatorText}). The unused deposit comes back to your MoMo. Escrow ${maxWh} Wh, incl. cable loss and stop margin.</small></div>
+    ${orderPickerHTML({ targetWh, maxOrderWh, rate, scale, disabled: !outage })}
+    <div class="momo-quote"><span>Deposit for ${targetWh} Wh</span><b>${depositText}</b><small>You pay about ${priceText} for ${realText} (${targetWh} Wh in the demo) at ${rateText}/kWh; a diesel generator: about ${generatorText}. The unused deposit comes back to your MoMo. Escrow ${maxWh} Wh, incl. cable loss and stop margin.</small></div>
     <button class="btn btn-momo btn-big" type="button" data-act="pay-open" ${canRequest ? '' : 'disabled'}><span class="momo-dot" aria-hidden="true">M</span>Request ${targetWh} Wh · pay with MoMo</button>
     <p class="note"><span class="pill sim">Simulated MoMo</span> No real payment is made. After the deposit, the backend opens the trade on-chain for your order and starts the supply in the Wokwi simulation.</p></div>`;
 }
@@ -53,6 +58,7 @@ export function openingCardHTML({ targetWh }) {
 /**
  * Live session with the order progress.
  * receivedWh: live energy received (meter count, or estimate from METER_A's counter when estimate=true).
+ * stopAtWh: the shop pressed Stop; the backend ends the supply at this whole Wh.
  */
 export function liveSessionHTML(x) {
   const pct = x.targetWh ? Math.min(100, (x.receivedWh / x.targetWh) * 100) : null;
@@ -72,7 +78,9 @@ export function liveSessionHTML(x) {
       <div class="row"><span>Still unserved</span><b>${x.unservedText}</b></div>
       <div class="row"><span>Opened</span><b>${x.openTxHtml}</b></div>
     </div>
-    <button class="btn btn-line" type="button" data-act="request-off">Stop and pay</button></div>`;
+    ${x.stopAtWh ? `<button class="btn btn-line" type="button" disabled>Stopping at ${x.stopAtWh} Wh…</button>
+    <p class="note">The supply runs a few more seconds to a whole Wh, so both meter readings pass the check. You pay only for what you receive.</p>`
+    : '<button class="btn btn-line" type="button" data-act="request-off">Stop and pay</button>'}</div>`;
 }
 
 /** After STOP (button or order reached): both final readings, then the backend's check. */

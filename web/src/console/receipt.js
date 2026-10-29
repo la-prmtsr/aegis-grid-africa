@@ -1,7 +1,7 @@
 // Dual-meter receipt for one trade, opened from a row of the operator Oracle table.
 // It joins the two signed meter readings (what Meter A sent, what Meter B received), the contract's
 // verdict and the simulated MoMo money movements (same numbers as the ledger, from momoForTrade).
-import { momoForTrade, fiat, whToFiat, depositFiat } from '../lib/momo.js';
+import { momoForTrade, fiat, whToFiat, depositFiat, realText } from '../lib/momo.js';
 import { MOMO } from '../lib/config.js';
 import { esc } from '../lib/format.js';
 
@@ -120,8 +120,8 @@ export function receiptHTML(t, r, o) {
   const paid = paidWh != null ? whToFiat(paidWh) : null;
   const sp = 10000 - o.shares.util - o.shares.plat;
   const money = [
-    ['Deposit from buyer', `${fiat(depositFiat(t.maxWh))}`, t.status === 'Disputed' ? 'held in escrow' : `up to ${whTxt(t.maxWh || MOMO.tradeMaxWh)} Wh`, ''],
-    ['Energy billed', paid != null ? cash(paid) : '–', paidWh != null ? `${whTxt(paidWh)} Wh × ${fiat(MOMO.pricePerKWh)}/kWh` : t.status === 'Disputed' ? 'frozen' : offDone ? 'not settled' : 'not yet', ''],
+    ['Deposit from buyer', `${fiat(depositFiat(t.maxWh))}`, t.status === 'Disputed' ? 'held in escrow' : `up to ${whTxt(t.maxWh || MOMO.tradeMaxWh)} Wh = ${realText(t.maxWh || MOMO.tradeMaxWh)} (×${MOMO.demoScale})`, ''],
+    ['Energy billed', paid != null ? cash(paid) : '–', paidWh != null ? `${whTxt(paidWh)} Wh = ${realText(paidWh)} × ${fiat(MOMO.pricePerKWh)}/kWh` : t.status === 'Disputed' ? 'frozen' : offDone ? 'not settled' : 'not yet', ''],
     ['Seller receives', paid != null ? cash(paid * sp / 10000) : '–', `${sp / 100}% · ${esc(MOMO.sellerPhone)}`, 'em'],
     ['Utility grid fee', paid != null ? cash(paid * o.shares.util / 10000) : '–', `${o.shares.util / 100}%`, ''],
     ['Aegis platform fee', paid != null ? cash(paid * o.shares.plat / 10000) : '–', `${o.shares.plat / 100}%`, ''],

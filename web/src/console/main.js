@@ -1,7 +1,7 @@
 // Aegis-Grid console: buyer (shop), seller (battery owner) and operator views.
 // Live data: meter telemetry over MQTT (docs/data-format.md) + AegisEscrow events and views on Base Sepolia.
 import { ACCOUNTS, CHAIN, SITE, MQTT_WS_URL, METER, MOMO, IMPACT, txUrl, addrUrl } from '../lib/config.js';
-import { fiat, whToFiat, depositFiat, generatorFiat, momoForTrade } from '../lib/momo.js';
+import { fiat, whToFiat, depositFiat, generatorFiat, realText, scaleNote, momoForTrade } from '../lib/momo.js';
 import { state, subscribe, update, tradeList } from '../lib/store.js';
 import { startMqtt, simControl, meterOnline } from '../lib/mqtt.js';
 import { startChain, connectWallet, resumeWallet, useWallet, disconnectWallet, hasWallet, tx, isAddress, same, explain } from '../lib/chain.js';
@@ -140,6 +140,8 @@ function liveTradeWh(id) {
   }
   return { sent: Number(s?.tradeWh || 0), received: Number(b?.tradeWh || 0), estimate: false };
 }
+/** wei for a fractional Wh amount (live estimates), exact to 0.001 Wh */
+const weiFor = (whAmount, price) => (BigInt(Math.round(Number(whAmount) * 1000)) * price) / 1000n;
 const fmtWh = (v) => (v == null ? '–' : Number.isInteger(Number(v)) ? String(v) : Number(v).toFixed(2));
 const simLabel = (t) => (backendTrade(t.id)?.label ? '<span class="pill sim" title="Settled on Base Sepolia testnet with gateway-signed readings from the Wokwi simulation. METER_B is derived from METER_A.">Simulated testnet settlement</span>' : '');
 
@@ -390,10 +392,11 @@ function buyerParts() {
       targetWh: orderOf(tradeId),
       receivedWh: got,
       estimate: live.estimate,
-      costText: `${fiat(whToFiat(got))} <small class="muted">· ${price != null ? money(BigInt(Math.floor(got)) * price) : '–'}</small>`,
+      costText: `${fiat(whToFiat(got))} <small class="muted">· ${price != null ? money(weiFor(got, price)) : '–'}</small>`,
       depositText: fiat(depositFiat(t?.maxWh)),
       escrowText: t?.maxWh && price != null ? `${money(BigInt(t.maxWh) * price)} <small class="muted">· ${t.maxWh} Wh</small>` : '–',
       unservedText: watts(buyer?.unservedW),
+      stopAtWh: state.backend?.active?.id === tradeId ? state.backend.active.stopAtWh : null,
       openTxHtml: t?.openTx ? `<a class="ext" href="${txUrl(t.openTx)}" target="_blank" rel="noopener">${shortHash(t.openTx)}</a>` : 'waiting for event…',
     });
   } else if (tradeId && t?.status === 'Open' && !closedOffChain(t)) {
@@ -422,6 +425,8 @@ function buyerParts() {
       priceText: fiat(whToFiat(orderWh())),
       generatorText: fiat(generatorFiat(orderWh(), IMPACT.dieselLPerKWh)),
       rate: orderRate(),
+      scale: MOMO.demoScale,
+      realText: realText(orderWh()),
     });
   }
   patch('b-action', html);
@@ -432,12 +437,12 @@ function buyerParts() {
   patch('b-list', tradesTable(myTrades('buyer'), 'buyer'));
 
   const deliveredMine = myTrades('buyer').filter((x) => x.status === 'Settled').reduce((a, x) => a + (x.deliveredWh || 0), 0);
-  const im = impact(deliveredMine);
+  const im = impact(deliveredMine * MOMO.demoScale);
   patch('b-impact', `
-    <div class="kpi hero" style="--tone:var(--green)"><i class="ic">${svgI(KI.leaf)}</i><span>Clean energy you bought</span><b>${wh(deliveredMine)}</b><em>settled on-chain, from a neighbour's battery instead of a generator</em></div>
+    <div class="kpi hero" style="--tone:var(--green)"><i class="ic">${svgI(KI.leaf)}</i><span>Clean energy you bought</span><b>${realText(deliveredMine)}</b><em>${wh(deliveredMine)} measured and settled on-chain × demo scale ${MOMO.demoScale}, from a neighbour's battery instead of a generator</em></div>
     ${kpiCard('sun', 'drop', 'Diesel avoided', `${im.litres.toFixed(2)}<small>L</small>`, 'assumed generator use')}
     ${kpiCard('sky', 'cloud', 'CO₂ avoided', `${im.co2Kg.toFixed(2)}<small>kg</small>`, 'assumed emission factor')}
-    <div class="kpi wide" style="--tone:var(--violet)"><i class="ic">${svgI(KI.info)}</i><span>How this is counted</span><p class="method">${IMPACT.dieselLPerKWh} L of diesel per kWh a generator would have made, and ${IMPACT.co2KgPerL} kg of CO₂ per litre burned. Both are assumptions until the team cites sources. Energy comes from trades settled on Base Sepolia.</p></div>`);
+    <div class="kpi wide" style="--tone:var(--violet)"><i class="ic">${svgI(KI.info)}</i><span>How this is counted</span><p class="method">${IMPACT.dieselLPerKWh} L of diesel per kWh a generator would have made, and ${IMPACT.co2KgPerL} kg of CO₂ per litre burned. Both are assumptions until the team cites sources. Energy comes from trades settled on Base Sepolia, × the demo scale (${MOMO.demoScale}) for a real shop.</p></div>`);
 }
 
 function receiptHTML(t) {
@@ -451,7 +456,7 @@ function receiptHTML(t) {
     signedTxt: bt && !bt.label ? 'Wh · meter final' : 'Wh · signed',
     gap: sellerWh != null && buyerWh != null ? gapPct(sellerWh, buyerWh) : null,
     targetWh: bt?.targetWh ?? null,
-    settledRowHtml: t.status === 'Settled' ? `<div class="row"><span>Paid for ${wh(t.deliveredWh)}</span><b>${money(t.amount)}</b></div>` : '',
+    settledRowHtml: t.status === 'Settled' ? `<div class="row"><span>Paid for ${wh(t.deliveredWh)} = ${realText(t.deliveredWh)}</span><b>${fiat(whToFiat(t.deliveredWh))} <small class="muted">· ${money(t.amount)}</small></b></div>` : '',
     outcomeHtml: t.status === 'Settled' ? `<div class="split">
       <div style="background:var(--green-soft)"><span>Seller</span><b>${money(t.sellerShare)}</b></div>
       <div style="background:var(--blue-soft)"><span>Utility fee</span><b>${money(t.utilityShare)}</b></div>
@@ -568,7 +573,7 @@ function sellerParts() {
       <div class="live-num"><b class="mono">${Math.round(Number(s?.exportW || 0))}</b><span>W to the buyer's shop</span></div>
       <div class="flowbar" aria-hidden="true" style="margin:14px 0"><i></i></div>
       <div class="rows">${order ? `<div class="row"><span>Shop's order</span><b>${order} Wh received</b></div>` : ''}<div class="row"><span>Sent this trade</span><b>${sent.toFixed(1)} Wh</b></div>
-        <div class="row"><span>Your share so far (est.)</span><b>${price != null ? money((BigInt(Math.floor(sent * 0.98)) * price * BigInt(10000 - util - plat)) / 10000n) : '–'}</b></div>
+        <div class="row"><span>Your share so far (est.)</span><b>${fiat(whToFiat(sent * 0.98) * (10000 - util - plat) / 10000)} <small class="muted">· ${price != null ? money((weiFor(sent * 0.98, price) * BigInt(10000 - util - plat)) / 10000n) : '–'}</small></b></div>
         <div class="row"><span>Battery reserve</span><b>stops at ${s?.minSocPct ?? 5}%</b></div></div>
       <p class="note">You are paid for what the shop's meter receives (about 2% less than you send, cable loss).</p>`
     : `<div class="ph"><h2>Selling now</h2><span class="pill idle">${state.grid === 'OUTAGE' ? 'Waiting for a request' : 'Grid on'}</span></div>
@@ -583,7 +588,7 @@ function sellerParts() {
     <div class="big-num">${money(earned)}<small>total earned on-chain</small></div>
     <div class="rows">
       <div class="row"><span>Total earned (seller share, ${(10000 - util - plat) / 100}%)</span><b>${money(earned)}</b></div>
-      <div class="row"><span>Energy sold</span><b>${wh(settled.reduce((a, x) => a + (x.deliveredWh || 0), 0))}</b></div>
+      <div class="row"><span>Energy sold</span><b>${wh(settled.reduce((a, x) => a + (x.deliveredWh || 0), 0))} = ${realText(settled.reduce((a, x) => a + (x.deliveredWh || 0), 0))}</b></div>
       <div class="row"><span>In the contract, ready to withdraw</span><b>${money(bal)}</b></div>
     </div>
     <div class="momo-box" style="margin-top:12px"><div class="momo-head"><span class="momo-dot" aria-hidden="true">M</span><b>Paid to your MoMo</b><span class="pill sim">Simulated</span></div>
@@ -691,10 +696,10 @@ function opsParts() {
   const settled = list.filter((t) => t.status === 'Settled');
   const disputed = list.filter((t) => t.disputed);
   const sum = (k) => settled.reduce((a, t) => a + BigInt(t[k] || 0), 0n);
-  const im = impact(T?.totalDeliveredWh || 0);
+  const im = impact((T?.totalDeliveredWh || 0) * MOMO.demoScale);
   patch('o-kpis', `
     <div class="kpi hero" style="--tone:var(--green)"><i class="ic">${svgI(KI.bolt)}</i><span>Energy delivered</span><b>${T ? wh(T.totalDeliveredWh) : '–'}</b>
-      <em>on-chain totalDeliveredWh · about ${im.litres.toFixed(2)} L diesel avoided (assumption)</em>
+      <em>on-chain totalDeliveredWh = ${T ? realText(T.totalDeliveredWh) : '–'} at a real shop (×${MOMO.demoScale}) · about ${im.litres.toFixed(2)} L diesel avoided (assumption)</em>
       ${sparkSVG(state.history.slice(-120).map((p) => p.exportW))}<small class="spark-l">${state.history.length > 1 ? 'Battery → shop, live' : ''}</small></div>
     ${kpiCard('sky', 'swap', 'Trades', T ? String(T.nextTradeId - 1) : '–', `${settled.length} settled`)}
     ${kpiCard('rose', 'shield', 'Disputes caught', String(disputed.length), `${list.filter((t) => t.status === 'Disputed').length} still frozen`)}
@@ -765,7 +770,7 @@ function opsParts() {
     ${ledger.length ? `<div class="tbl-wrap"><table><thead><tr><th>Time</th><th>Trade</th><th>Type</th><th>Number</th><th class="num">Amount</th><th>Status</th><th>Reference</th></tr></thead><tbody>
       ${ledger.slice(0, 16).map((r) => `<tr class="${r.status === 'HELD' ? 'flag' : ''}"><td data-label="Time">${clock(r.time)}</td><td data-label="Trade" class="mono">#${r.tradeId}</td><td data-label="Type">${r.label}</td><td data-label="Number" class="mono">${esc(r.phone)}</td><td data-label="Amount" class="num">${fiat(r.amount)}</td><td data-label="Status">${momoPill(r.status)}</td><td data-label="Reference" class="mono">${r.ref}</td></tr>`).join('')}
     </tbody></table></div>` : '<p class="empty">No mobile money movements yet.</p>'}
-    <p class="note">Cedi amounts follow the on-chain trades at a fixed demo price of ${fiat(MOMO.pricePerKWh)} per kWh (above the grid tariff, below a diesel generator). Production would use the MoMo Collections and Disbursements APIs through a server, with the platform funding the escrow.</p>`);
+    <p class="note">${scaleNote()} Price ${fiat(MOMO.pricePerKWh)} per kWh: about twice the grid tariff for the seller, about a third below a diesel generator for the shop. Production would use the MoMo Collections and Disbursements APIs through a server, with the platform funding the escrow.</p>`);
 
   patch('o-balances', `<div class="ph"><h2>Balances to withdraw</h2><small>pull payments</small></div>
     <div class="rows">${accts.map(([n, a]) => {

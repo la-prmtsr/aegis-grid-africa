@@ -89,14 +89,14 @@ The console shows the planned **MoMo** payment layer, clearly labelled *Simulate
 
 | Step | What the user sees | What really happens |
 |---|---|---|
-| The buyer requests power | Order size in Wh (steps set by the backend, see docs/integration-v2.md Stage 6), deposit quote in Ghana cedi, "Pay with MoMo", a phone approval screen, then "Confirming payment" | Nothing is charged. After "Approve", the console sends `requesting: true` and the bridge opens a real trade |
-| Live session | Progress to the order, cost so far in cedi (and gwei); stops automatically at the order | Real meter telemetry |
-| Trade settles | Receipt: deposit, refund of the unused part to the buyer's MoMo, saving vs a diesel generator, and a Blockchain receipt with links to the openTrade and settleTrade transactions | Real `TradeSettled` event; cedi values are derived from it |
+| The buyer requests power | Order size in Wh (steps set by the backend, see docs/integration-v2.md Stage 6), deposit quote in US dollars, "Pay with MoMo", a phone approval screen, then "Confirming payment" | Nothing is charged. After "Approve", the console sends `requesting: true` and the bridge opens a real trade |
+| Live session | Progress to the order, cost so far in US dollars (and gwei); stops automatically at the order | Real meter telemetry |
+| Trade settles | Receipt: deposit, refund of the unused part to the buyer's MoMo, saving vs a diesel generator, and a Blockchain receipt with links to the openTrade and settleTrade transactions | Real `TradeSettled` event; dollar values are derived from it |
 | Seller | "Paid to your MoMo" per trade | Derived from the seller share in `TradeSettled` |
 | Dispute | Deposit "Held" | Real `TradeDisputed`, funds frozen in escrow |
 | Operator | Mobile money ledger: collected, paid out, refunded, held | All derived from on-chain trades |
 
-Cedi amounts use a fixed demo price (`VITE_PRICE_PER_KWH`, default GH₵3.50 per kWh): above the PURC non-residential grid tariff (GH₵1.84/kWh from 1 July 2026) and below a small diesel generator (about GH₵5.8/kWh at GH₵19.30 per litre and 0.3 L/kWh). It is an assumption, not a market price. On-chain balances and the Withdraw buttons appear when a wallet is connected.
+Dollar amounts use the demo energy scale (`VITE_DEMO_ENERGY_SCALE`, default ×100: 1 Wh measured = 100 Wh at a real shop, see the main README, "Prices and the demo scale") and a fixed demo price (`VITE_P2P_USD_PER_KWH`, default $0.30 per kWh), set between the two prices a shop in Ghana compares (October 2026, about GH₵12.25 per US$): the PURC non-residential grid tariff, GH₵1.84/kWh from 1 July 2026 (about $0.15/kWh, so the battery owner earns about twice the grid price), and a small diesel generator, about $0.47/kWh at GH₵19.30 ($1.58) per litre and 0.3 L/kWh (so the shop pays about a third less). It is an assumption, not a market price. On-chain balances and the Withdraw buttons appear when a wallet is connected.
 
 Production path (roadmap): a small server calls the MTN MoMo Open API, Collections (`requestToPay`) for the deposit and Disbursements (`transfer`) for payouts and refunds, with the platform funding the escrow from its float. Going live needs an MTN merchant account and the applicable payment regulations in Ghana.
 

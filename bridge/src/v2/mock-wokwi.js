@@ -31,14 +31,38 @@ let lastTradeId = null; // the firmware keeps reporting the last trade's counter
 let lastTradeWh = 0;
 let batteryWh = CAP_WH * 0.5;
 
+/** Faras's plain control formats (demo/control/<name> with a bare value), as recorded from Unity on 29 Oct. */
+const onOff = (v) => v === 1 || v === true || v === '1' || v === 'on' || v === 'ON' || v === 'true';
+const PLAIN = {
+  grid_outage: (v) => ({ outage: onOff(v) }),
+  emergency_backup: (v) => ({ backup: onOff(v) }),
+  buyer_request: (v) => ({ buyerRequest: onOff(v) }),
+  pv_w: (v) => (Number.isFinite(Number(v)) ? { pvW: Math.max(0, Number(v)) } : {}),
+  load_w: (v) => (Number.isFinite(Number(v)) ? { communityLoadW: Math.max(0, Number(v)) } : {}),
+};
+
 const { publish } = connect('mock-wokwi', [`${topics.wokwiControl('#')}`, topics.appDemo, topics.tradeCmd], (topic, msg) => {
   if (topic === topics.tradeCmd) return onTradeCmd(msg);
-  if (topic === topics.wokwiControl('mode')) {
-    const next = msg?.mode === 'remote' ? 'remote' : msg?.mode === 'local' ? 'local' : null;
+  const sub = topic.startsWith(topics.wokwiControl('')) ? topic.slice(topics.wokwiControl('').length) : null;
+  if (sub === 'mode') {
+    const m = typeof msg === 'string' ? msg.toLowerCase() : msg?.mode;
+    const next = m === 'remote' ? 'remote' : m === 'local' ? 'local' : null;
     if (next && next !== mode) log(`METER_A mode -> ${next.toUpperCase()}`);
     if (next) mode = next;
     return undefined;
   }
+  if (sub === 'meter_b_tamper') {
+    const next = onOff(msg);
+    if (tamper !== next) log(`METER_B tamper ${next ? 'ON (reports 60%)' : 'off'}`);
+    tamper = next;
+    return undefined;
+  }
+  if (sub && PLAIN[sub] && (typeof msg !== 'object' || msg === null)) {
+    const patch = PLAIN[sub](msg);
+    if (Object.keys(patch).length) set(patch, `control ${sub}`);
+    return undefined;
+  }
+  if (typeof msg !== 'object' || msg === null) return undefined; // another plain value: not used by the mock
   if (topic === topics.appDemo && typeof msg.tamper === 'boolean') {
     if (tamper !== msg.tamper) log(`METER_B tamper ${msg.tamper ? 'ON (reports 60%)' : 'off'}`);
     tamper = msg.tamper;
@@ -62,7 +86,7 @@ const { publish } = connect('mock-wokwi', [`${topics.wokwiControl('#')}`, topics
     if (Number.isFinite(msg.communityLoadW)) patch.communityLoadW = msg.communityLoadW;
   }
   if (Object.keys(patch).length) set(patch, topic.endsWith('/app/demo') ? 'app' : 'control');
-}, log);
+}, log, { raw: true });
 
 function onTradeCmd(cmd) {
   if (cmd?.op === 'start') {

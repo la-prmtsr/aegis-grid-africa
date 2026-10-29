@@ -188,5 +188,19 @@ trade counter `p2p_trade_wh` runs, set with `FIRMWARE_ENERGY_SCALE` in `.env`:
   At 60× the 100 Wh minimum does the same job: from about 67 Wh up honest readings always pass.
 - A buyer who presses Stop early stops at a random point; a small trade can then still be rejected and the deposit
   is refunded after expiry.
-- The buyer pays only for what METER_B received. Prices in the dashboard are in Ghana cedi (`VITE_PRICE_PER_KWH`,
-  default GH₵3.50/kWh, a demo assumption between the grid tariff and a diesel generator).
+- The buyer pays only for what METER_B received. Prices in the dashboard are in US dollars on the real-world energy
+  (demo scale ×100, $0.30/kWh): see the main README, "Prices and the demo scale". The chain keeps the measured Wh.
+
+**Robustness (30 Oct, from a full end-to-end run of GitHub main with the mock):**
+
+- The mock now understands Faras's plain controls (`demo/control/grid_outage` `1`, `mode` `remote`, `pv_w` `300`, …).
+  Before, a plain `1` crashed the mock (and with it the whole `npm run v2:mock`), and `remote` was ignored, so no trade
+  could start in mock mode with the live `.env`. A bad MQTT message is now logged, never fatal.
+- Backend restarted during a trade: that trade is `REJECTED`, and the relayer now also sends `trade/cmd stop` to
+  METER_A when the firmware still reports it as active. No new escrow opens until the firmware is free; before, the
+  next deposit was locked in a trade the firmware ignored.
+- Shop presses Stop: with the real-time counter the supply runs on (a few seconds) to the next whole Wh, at least
+  `MIN_SETTLEMENT_WH`, so the whole-Wh check passes; below 2 Wh, or with no progress for 20 s, it stops at once.
+  `backend/status` shows it as `active.stopAtWh`, the buyer card as "Stopping at … Wh".
+- In `wokwi-final` mode the "battery model runs at about Nx" line is information only: trades are billed from the
+  firmware's counter, so it no longer says MISMATCH.

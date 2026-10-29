@@ -59,8 +59,13 @@ async function onWokwi(raw) {
   const est = telemetry.wokwiTimeScaleEstimate;
   if (est && Date.now() - lastScaleLog > 60000) {
     lastScaleLog = Date.now();
-    const off = Math.abs(est - SIM.timeScale) / SIM.timeScale > 0.25;
-    log(`Wokwi battery model runs at about ${est}x real time; energy accounting uses ${SIM.timeScale}x${off ? ' (MISMATCH: see docs/integration-v2.md, "Time scale")' : ''}`);
+    if (STAGE5B.evidence === 'wokwi-final') {
+      // Stage 5B bills from the firmware's own trade counter (p2p_trade_wh and the finals), not from this estimate
+      log(`Wokwi battery model runs at about ${est}x real time (info only: trades are billed from the firmware counter)`);
+    } else {
+      const off = Math.abs(est - SIM.timeScale) / SIM.timeScale > 0.25;
+      log(`Wokwi battery model runs at about ${est}x real time; energy accounting uses ${SIM.timeScale}x${off ? ' (MISMATCH: see docs/integration-v2.md, "Time scale")' : ''}`);
+    }
   }
   if (final) await publishFinal(final);
 }

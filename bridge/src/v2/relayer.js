@@ -17,7 +17,7 @@ import { controlMessage } from './control.js';
 import { STATUS as T, LABEL_TESTNET, validateFinal, verifyPair, chainIdOf, dedupeKey, toContractWh } from './evidence.js';
 import { openEvidenceStore } from './evidence-store.js';
 import { startStatusApi } from './status-api.js';
-import { clampOrder, maxWhFor, receivedEstimate, orderReached } from './sizing.js';
+import { clampOrder, maxWhFor, receivedEstimate, orderReached, isFine } from './sizing.js';
 
 const log = logger('relayer');
 const c = await connectChain();
@@ -49,6 +49,8 @@ const S = {
   notice: null,
   meterBSeen: 0, // last raw METER_B firmware telemetry (Stage 5B.2)
   lastTradeEnd: 0, // the firmware may still report the buyer request for a moment after STOP
+  fwBusy: false, // Stage 5B: METER_A still runs a trade this backend does not track (left from a restart)
+  orphanStopAt: 0,
 };
 const trades = new Map(); // escrow id -> Stage 5B record (newest kept, see summary())
 
@@ -90,6 +92,7 @@ const subs = [topics.telemetry('METER_A'), topics.telemetry('METER_B'), topics.a
 const { publish } = connect('relayer', subs, async (topic, msg) => {
   if (topic === topics.telemetry('METER_A')) {
     S.grid = msg.grid;
+    if (FIVE_B) await clearOrphan(msg);
     await trackOrder(msg);
     const req = Boolean(msg.buyerRequest);
     const changed = req !== S.wokwiRequest;
@@ -158,6 +161,10 @@ async function trackOrder(msg) {
   if (sellerWh === null) return;
   a.liveSellerWh = sellerWh;
   a.liveBuyerWh = receivedEstimate(sellerWh, SIM.lineLoss);
+  if (a.stopAtWh && !a.stopping && (orderReached(a.liveBuyerWh, a.stopAtWh, ORDER_RATE) || Date.now() > a.stopDeadline)) {
+    log(`trade ${a.id}: shop's stop reached at about ${a.liveBuyerWh.toFixed(2)} Wh received -> STOP`);
+    return stop5b(a, 'shop stopped requesting');
+  }
   if (a.targetWh && !a.stopping && orderReached(a.liveBuyerWh, a.targetWh, ORDER_RATE)) {
     log(`trade ${a.id}: order of ${a.targetWh} Wh reached (about ${a.liveBuyerWh.toFixed(2)} Wh received) -> STOP`);
     S.appRequest = false; // the order is complete: the shop's request ends with it (no new trade opens)
@@ -167,15 +174,48 @@ async function trackOrder(msg) {
   }
 }
 
+/**
+ * Stage 6, shop presses Stop: with a real-time counter, keep the supply on until the buyer's estimate passes the next
+ * whole Wh (at least the settlement minimum), so both finals round to whole Wh within the 3% check instead of being
+ * rejected for rounding alone (live trade 8). Takes a few seconds; a stop below 2 Wh, or no progress for 20 s, stops at
+ * once. Returns true when the stop is deferred.
+ */
+function cleanStop(a) {
+  if (a.stopAtWh) return true; // already deferred
+  const got = a.liveBuyerWh ?? 0;
+  if (!isFine(ORDER_RATE) || got < 2) return false;
+  a.stopAtWh = Math.max(Math.floor(got) + 1, Math.ceil(STAGE5B.minSettleWh));
+  a.stopDeadline = Date.now() + 20000;
+  log(`trade ${a.id}: shop stops at about ${got.toFixed(2)} Wh -> supply continues to ${a.stopAtWh} Wh so the whole-Wh readings agree`);
+  clearTimeout(a.stopTimer);
+  a.stopTimer = setTimeout(() => { if (S.active === a && !a.stopping) stop5b(a, 'shop stopped requesting'); }, 21000);
+  return true;
+}
+
+/**
+ * Stage 5B: METER_A still runs a trade this backend is not tracking (the backend restarted mid-trade, so that trade
+ * was REJECTED). Stop it in the firmware, and open no new escrow until it has ended: the firmware runs one trade at
+ * a time and would ignore the new START, leaving a deposit locked in a trade that never counts.
+ */
+async function clearOrphan(msg) {
+  const id = msg.p2pTradeActive ? String(msg.p2pTradeId ?? '') : '';
+  S.fwBusy = Boolean(id) && id !== String(S.active?.id ?? '');
+  if (!S.fwBusy || Date.now() - S.orphanStopAt < 5000) return;
+  S.orphanStopAt = Date.now();
+  log(`METER_A still runs trade ${id}, which this backend no longer tracks -> trade/cmd stop`);
+  await command(topics.tradeCmd, { op: 'stop', tradeId: id });
+}
+
 async function evaluate() {
   // Stage 5B: only the app may start a trade. The firmware needs the escrow id, which exists only after
   // openTrade; a buyer button pressed in Unity/Wokwi cannot create one.
   const requested = FIVE_B ? S.appRequest : S.appRequest || S.wokwiRequest;
   if (!requested) S.needRelease = false;
 
-  if (!S.active && !S.busy && requested && !S.needRelease && S.grid === 'OUTAGE') return FIVE_B ? open5b() : open();
+  if (!S.active && !S.busy && requested && !S.needRelease && S.grid === 'OUTAGE' && !S.fwBusy) return FIVE_B ? open5b() : open();
   if (S.active && !S.active.stopping && (!requested || S.grid !== 'OUTAGE')) {
     const why = S.grid !== 'OUTAGE' ? 'grid restored' : 'shop stopped requesting';
+    if (FIVE_B && why !== 'grid restored' && cleanStop(S.active)) return publishStatus();
     return FIVE_B ? stop5b(S.active, why) : stop(why);
   }
   return undefined;
@@ -239,6 +279,7 @@ async function open5b() {
 
 async function stop5b(rec, why) {
   rec.stopping = true;
+  clearTimeout(rec.stopTimer);
   log(`trade ${rec.id}: ${why} -> STOP`);
   await command(topics.tradeCmd, { op: 'stop', tradeId: rec.tradeId });
   if (rec.status === T.ACTIVE) setStatus(rec, T.STOPPED, { stopReason: why });
@@ -510,7 +551,7 @@ async function publishStatus() {
     escrow: chain.escrow,
     grid: S.grid,
     requests: { app: S.appRequest, wokwi: S.wokwiRequest },
-    active: a ? { id: a.id, source: a.source, openTx: a.openTx, approvals: a.approvals, stopping: a.stopping, status: a.status ?? null, targetWh: a.targetWh ?? null, maxWh: a.maxWh ?? null, liveSellerWh: a.liveSellerWh ?? null, liveBuyerWh: a.liveBuyerWh ?? null, sellerWh: FIVE_B ? a.finals?.seller?.wh ?? null : a.seller?.wh ?? null, buyerWh: FIVE_B ? a.finals?.buyer?.wh ?? null : a.buyer?.wh ?? null } : null,
+    active: a ? { id: a.id, source: a.source, openTx: a.openTx, approvals: a.approvals, stopping: a.stopping, status: a.status ?? null, targetWh: a.targetWh ?? null, maxWh: a.maxWh ?? null, liveSellerWh: a.liveSellerWh ?? null, liveBuyerWh: a.liveBuyerWh ?? null, stopAtWh: a.stopAtWh ?? null, sellerWh: FIVE_B ? a.finals?.seller?.wh ?? null : a.seller?.wh ?? null, buyerWh: FIVE_B ? a.finals?.buyer?.wh ?? null : a.buyer?.wh ?? null } : null,
     lastResult: S.lastResult,
     notice: S.notice ?? (FIVE_B && S.wokwiRequest && !S.appRequest && !a && Date.now() - S.lastTradeEnd > 3000 ? 'Buyer button pressed in Wokwi/Unity: in Stage 5B trades start only from the app (the firmware needs the escrow id)' : null),
     wokwiControl: Object.fromEntries(Object.entries(WOKWI_CONTROL).map(([k, v]) => [k, Boolean(v.topic)])),
