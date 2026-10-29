@@ -31,9 +31,11 @@ export async function connectChain() {
   const parse = (receipt) =>
     receipt.logs.map((l) => { try { return escrow.interface.parseLog(l); } catch { return null; } }).filter(Boolean);
 
-  async function openTrade() {
-    const deposit = TRADE.maxWh * TRADE.pricePerWh;
-    const tx = await escrow.connect(buyer).openTrade(chain.sellerAddress, TRADE.pricePerWh, TRADE.maxWh, TRADE.durationS, { value: deposit });
+  /** Opens an escrow for maxWh whole Wh (Stage 6: sized from the buyer's order; default TRADE_MAX_WH). */
+  async function openTrade(maxWh = TRADE.maxWh) {
+    const max = BigInt(maxWh);
+    const deposit = max * TRADE.pricePerWh;
+    const tx = await escrow.connect(buyer).openTrade(chain.sellerAddress, TRADE.pricePerWh, max, TRADE.durationS, { value: deposit });
     const receipt = await tx.wait();
     const ev = parse(receipt).find((e) => e.name === 'TradeOpened');
     return { id: Number(ev.args.id), txHash: receipt.hash };

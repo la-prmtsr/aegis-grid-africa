@@ -39,7 +39,11 @@ export function metrics() {
     energyStatus: s.energyStatus || '–',
     allocation: s.allocation || null,
     exportW: Number(s.exportW) || 0,
-    tradeId: Number(s.tradeId) || 0,
+    // Stage 5B: the escrow trade is known by the backend; Stage 6: its order and live progress
+    tradeId: Number(s.tradeId) || Number(state.backend?.active?.id) || 0,
+    targetWh: state.backend?.active?.targetWh ?? null,
+    liveWh: state.backend?.active?.id && s.p2pTradeId === String(state.backend.active.id) && Number.isFinite(s.p2pTradeWh)
+      ? s.p2pTradeWh * (1 - (state.backend?.params?.lineLoss ?? 0.02)) : null,
   };
 }
 
@@ -126,10 +130,10 @@ export function ctlToggles() {
   const none = !m;
   return `<div class="cr-label">Scenario</div><div class="cr-tiles">
     ${tile('t-outage', 'outage', 'Utility outage', m?.outage ? 'Islanded' : 'Off', !!m?.outage, 'red', none, 'Opens the PCC: the street runs on the battery only')}
-    ${tile('t-request', 'request', 'Buyer request', requesting ? (tradeId ? `Trade #${tradeId}` : 'Opening…') : 'Off', requesting, 'blue', none, 'UMKM B asks for 250 W: opens a trade on-chain')}
+    ${tile('t-request', 'request', 'Buyer request', requesting ? (tradeId ? `Trade #${tradeId}` : 'Opening…') : 'Off', requesting, 'blue', none, 'UMKM B requests its order (Wh): the backend opens a trade on-chain and stops it at the order')}
     ${tile('t-backup', 'backup', 'Emergency backup', m?.backup ? 'On' : 'Off', !!m?.backup, 'green', none, 'Resident A lets the battery also feed the community loads')}
     ${be?.controls?.tamper === false
-      ? tile('t-tamper', 'tamper', 'Tamper Meter B', 'In Wokwi', false, 'amber', true, 'Stage 5B: METER_B runs as Faras’s ESP32 in Wokwi. Switch its tamper there; the backend never alters a meter value.')
+      ? tile('t-tamper', 'tamper', 'Tamper Meter B', 'In Wokwi', false, 'amber', true, 'Stage 5B: METER_B runs as Faras’s ESP32 in Wokwi. Set WOKWI_CTRL_TAMPER_* in .env to switch its tamper from here; the backend never alters a meter value.')
       : tile('t-tamper', 'tamper', 'Tamper Meter B', b?.tamper ? '−40%' : 'Off', !!b?.tamper, 'amber', !b, 'Meter B under-reports by 40%: the backend rejects the trade')}
   </div>`;
 }
@@ -139,7 +143,7 @@ export function ctlFoot() {
   const be = state.backend;
   const wc = be?.wokwiControl;
   const chips = wc
-    ? Object.entries({ buyer: 'Buyer', outage: 'Outage', backup: 'Backup', pv: 'PV', load: 'Load' })
+    ? Object.entries({ buyer: 'Buyer', outage: 'Outage', backup: 'Backup', pv: 'PV', load: 'Load', ...('tamper' in wc ? { tamper: 'Tamper B' } : {}) })
       .map(([k, l]) => `<span class="pill ${wc[k] ? 'ok' : 'idle'}">${l}</span>`).join('')
     : '<span class="pill idle">relayer not running</span>';
   return `<div class="cr-strip">
@@ -173,7 +177,7 @@ export function metricsHTML() {
     ${group('Supply', `${row('Unserved', W(m.unserved), m.unserved > 0.5 ? 'neg' : '')}${row('Load served (total)', pctTxt(m.servedPct))}
       ${bar(m.servedPct, m.servedPct >= 99.5 ? 'green' : m.servedPct >= 60 ? 'amber' : 'alert', 'Load served')}`)}
     ${group('Telemetry', `${row('Source', m.source === 'mock' ? 'Mock' : 'Wokwi ESP32')}${row('Last message', age == null ? '–' : `${age}s ago`, age > 5 ? 'neg' : '')}
-      ${row('P2P to UMKM B', W(m.exportW))}${row('Active trade', m.tradeId ? `#${m.tradeId}` : '–')}`)}
+      ${row('P2P to UMKM B', W(m.exportW))}${row('Active trade', m.tradeId ? `#${m.tradeId}${m.targetWh ? ` · ${m.liveWh != null ? m.liveWh.toFixed(1) : '0.0'} / ${m.targetWh} Wh` : ''}` : '–')}`)}
   </div>`;
 }
 

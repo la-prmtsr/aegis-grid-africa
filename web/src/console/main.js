@@ -1,13 +1,15 @@
 // Aegis-Grid console: buyer (shop), seller (battery owner) and operator views.
 // Live data: meter telemetry over MQTT (docs/data-format.md) + AegisEscrow events and views on Base Sepolia.
 import { ACCOUNTS, CHAIN, SITE, MQTT_WS_URL, METER, MOMO, IMPACT, txUrl, addrUrl } from '../lib/config.js';
-import { usd, whToUsd, depositUsd, momoForTrade } from '../lib/momo.js';
+import { fiat, whToFiat, depositFiat, generatorFiat, momoForTrade } from '../lib/momo.js';
 import { state, subscribe, update, tradeList } from '../lib/store.js';
 import { startMqtt, simControl, meterOnline } from '../lib/mqtt.js';
 import { startChain, connectWallet, resumeWallet, useWallet, disconnectWallet, hasWallet, tx, isAddress, same, explain } from '../lib/chain.js';
 import { getSession, clearSession, initials, maskPhone, METHOD_LABEL } from '../lib/session.js';
 import { money, wh, watts, pct, gapPct, clock, simClock, impact, short, shortHash, esc } from '../lib/format.js';
-import { receiptHTML as tradeReceiptHTML, receiptNav, mountReceiptDrawer } from './receipt.js';
+import { orderPickerHTML, requestCardHTML, openingCardHTML, liveSessionHTML, closingCardHTML, momoCheckoutHTML, buyerReceiptHTML } from './buyer-session.js';
+import { clampOrder, maxWhFor, receivedEstimate, orderSteps, DEFAULT_RATE } from '../lib/sizing.js';
+import { receiptHTML as tradeReceiptHTML, receiptNav, mountReceiptDrawer, chainButtonHTML } from './receipt.js';
 import { ctlHead, syncEngineSwitch, chooseEngine, ctlSliders, ctlToggles, ctlFoot, metricsHTML, quickHTML } from './control-room.js';
 
 const session = getSession() || { name: 'Guest', method: 'guest' };
@@ -28,6 +30,7 @@ const ui = {
   busy: null, // name of the wallet action in progress
   momo: null, // simulated MoMo checkout step: null | 'confirm' | 'prompt' | 'processing' | 'declined'
   receiptId: null, // operator Mobile money: trade whose receipt is shown (null = newest)
+  targetWh: Number(localGet('aegis.order', '0')) || null, // Stage 6: buyer's order size (Wh); null = default for the rate
   page: null, // sidebar page shown in the current view (one page at a time, kept in the URL hash)
 };
 function localGet(k, d) { try { return localStorage.getItem(k) || d; } catch { return d; } }
@@ -118,6 +121,24 @@ function resultOf(t) {
   if (t.status === 'Open' && bt && BACKEND_PILL[bt.status]) return BACKEND_PILL[bt.status];
   if (t.status === 'Settled' && t.disputed) return ['warn', 'Resolved'];
   return [STATUS_PILL[t.status] || 'idle', t.status];
+}
+// Stage 6 order size: the same rules as the backend (lib/sizing.js), with the backend's own limits when known.
+const lineLossOf = () => state.backend?.params?.lineLoss ?? 0.02;
+const maxOrderWh = () => state.backend?.params?.maxOrderWh ?? MOMO.tradeMaxWh;
+/** Trade power, counter speed and cable loss from the backend (backend/status params.orderRate, lib/sizing.js). */
+const orderRate = () => ({ ...DEFAULT_RATE, ...(state.backend?.params?.orderRate || {}) });
+const orderWh = () => clampOrder(ui.targetWh ?? orderSteps(orderRate()).def, maxOrderWh(), orderRate());
+const orderMaxWh = () => maxWhFor(orderWh(), orderRate());
+/** Order of a trade: the backend's live record, or its stored verdict. */
+const orderOf = (id) => (state.backend?.active?.id === Number(id) ? state.backend.active.targetWh : backendTrade(id)?.targetWh) ?? null;
+/** Live energy of a trade: METER_A's firmware counter (Stage 5B) or the gateway meters' own counts. */
+function liveTradeWh(id) {
+  const s = state.seller, b = state.buyer;
+  if (state.backend?.stage5b?.evidence === 'wokwi-final') {
+    const sent = s && s.p2pTradeId === String(id) && Number.isFinite(s.p2pTradeWh) ? s.p2pTradeWh : 0;
+    return { sent, received: receivedEstimate(sent, lineLossOf()), estimate: true };
+  }
+  return { sent: Number(s?.tradeWh || 0), received: Number(b?.tradeWh || 0), estimate: false };
 }
 const fmtWh = (v) => (v == null ? '–' : Number.isInteger(Number(v)) ? String(v) : Number(v).toFixed(2));
 const simLabel = (t) => (backendTrade(t.id)?.label ? '<span class="pill sim" title="Settled on Base Sepolia testnet with gateway-signed readings from the Wokwi simulation. METER_B is derived from METER_A.">Simulated testnet settlement</span>' : '');
@@ -300,7 +321,7 @@ function walletChip({ momoLabel, momoAmount, phone, chainLabel, bal }) {
   const action = bal != null && bal > 0n
     ? `<button class="btn btn-green btn-sm" type="button" data-act="withdraw" ${busy ? 'disabled' : ''}>${ui.busy === 'withdraw' ? 'Confirm…' : 'Withdraw'}</button>`
     : state.wallet ? '' : `<button class="btn btn-line btn-sm" type="button" data-act="connect" ${busy ? 'disabled' : ''}>${ui.busy === 'connect' ? 'Check wallet…' : 'Connect'}</button>`;
-  return `<div class="wc-row"><span class="momo-dot" aria-hidden="true">M</span><span title="${esc(phone)} · simulated mobile money">${momoLabel}</span><b class="mono">${usd(momoAmount)}</b></div>
+  return `<div class="wc-row"><span class="momo-dot" aria-hidden="true">M</span><span title="${esc(phone)} · simulated mobile money">${momoLabel}</span><b class="mono">${fiat(momoAmount)}</b></div>
     <div class="wc-row"><span class="wc-eth" aria-hidden="true">Ξ</span><span title="Test ETH held by the escrow contract for this account">${chainLabel}</span><b class="mono">${money(bal)}</b>${action}</div>`;
 }
 
@@ -355,47 +376,53 @@ function buyerParts() {
   let html;
   const requesting = buyer?.requesting || state.backend?.requests?.app;
   if (requesting && !tradeId) {
-    html = `<div class="req-card"><div class="ph"><h2>Request clean power</h2><span class="pill warn">Opening trade</span></div>
-      <div class="searching"><span class="spinner" aria-hidden="true"></span>The bridge is opening a trade on-chain and depositing the escrow. This takes one block.</div>
-      <button class="btn btn-line" type="button" data-act="request-off">Cancel request</button></div>`;
+    html = openingCardHTML({ targetWh: state.backend?.requests?.app ? orderWh() : null });
   } else if (tradeId && (requesting || buyer?.status === 'RECEIVING')) {
     const price = pricePerWhOf(t);
-    const got = Number(buyer?.tradeWh || 0);
-    const fiveB = state.backend?.stage5b?.evidence === 'wokwi-final'; // METER_B firmware reports its energy in the final event
-    html = `<div class="live"><div class="ph"><h2>Live session · trade #${tradeId}</h2><span class="pill ${buyer?.status === 'RECEIVING' ? 'ok' : 'warn'}">${esc(BUYER_STATUS[buyer?.status] || buyer?.status || 'Starting')}</span></div>
-      <div class="live-num"><b class="mono">${Math.round(Number(buyer?.importW || 0))}</b><span>W from the seller's battery${seller ? ` · battery ${pct(seller.socBps)}` : ''}</span></div>
-      <div class="flowbar" aria-hidden="true"><i></i></div>
-      <div class="rows">
-        ${fiveB ? `<div class="row"><span>Energy received (your meter)</span><b class="muted" style="font-weight:500">reported when you stop</b></div>`
-          : `<div class="row"><span>Energy received (your meter)</span><b>${got.toFixed(1)} Wh</b></div>
-        <div class="row"><span>Cost so far</span><b>${usd(whToUsd(Math.floor(got)))} <small class="muted">· ${price != null ? money(BigInt(Math.floor(got)) * price) : '–'}</small></b></div>`}
-        <div class="row"><span>Deposit paid with MoMo</span><b>${usd(depositUsd(t?.maxWh))} <span class="pill sim">sim</span></b></div>
-        <div class="row"><span>Escrowed on-chain</span><b>${t?.maxWh && price != null ? money(BigInt(t.maxWh) * price) : '–'}</b></div>
-        <div class="row"><span>Still unserved</span><b>${watts(buyer?.unservedW)}</b></div>
-        <div class="row"><span>Opened</span><b>${t?.openTx ? `<a class="ext" href="${txUrl(t.openTx)}" target="_blank" rel="noopener">${shortHash(t.openTx)}</a>` : 'waiting for event…'}</b></div>
-      </div>
-      <button class="btn btn-line" type="button" data-act="request-off">Stop and pay</button></div>`;
+    const live = liveTradeWh(tradeId);
+    const got = live.received;
+    html = liveSessionHTML({
+      tradeId,
+      statusTone: buyer?.status === 'RECEIVING' ? 'ok' : 'warn',
+      statusText: esc(BUYER_STATUS[buyer?.status] || buyer?.status || 'Starting'),
+      importW: Number(buyer?.importW || 0),
+      batteryText: seller ? pct(seller.socBps) : '',
+      targetWh: orderOf(tradeId),
+      receivedWh: got,
+      estimate: live.estimate,
+      costText: `${fiat(whToFiat(got))} <small class="muted">· ${price != null ? money(BigInt(Math.floor(got)) * price) : '–'}</small>`,
+      depositText: fiat(depositFiat(t?.maxWh)),
+      escrowText: t?.maxWh && price != null ? `${money(BigInt(t.maxWh) * price)} <small class="muted">· ${t.maxWh} Wh</small>` : '–',
+      unservedText: watts(buyer?.unservedW),
+      openTxHtml: t?.openTx ? `<a class="ext" href="${txUrl(t.openTx)}" target="_blank" rel="noopener">${shortHash(t.openTx)}</a>` : 'waiting for event…',
+    });
   } else if (tradeId && t?.status === 'Open' && !closedOffChain(t)) {
-    const fin = backendTrade(tradeId)?.finals || {};
-    const sWh = rd.seller ? rd.seller.wh : fin.seller?.wh ?? null;
-    const bWh = rd.buyer ? rd.buyer.wh : fin.buyer?.wh ?? null;
-    html = `<div class="req-card"><div class="ph"><h2>Closing trade #${tradeId}</h2><span class="pill blue">Verifying</span></div>
-      <ul class="timeline">
-        <li class="${sWh != null ? 'done' : 'now'}">Seller meter final reading: ${sWh != null ? `${fmtWh(sWh)} Wh` : '…'}</li>
-        <li class="${bWh != null ? 'done' : 'now'}">Your meter final reading: ${bWh != null ? `${fmtWh(bWh)} Wh` : '…'}</li>
-        <li class="${bWh != null ? 'now' : ''}">${state.backend?.stage5b?.settlementMode === 'testnet' ? 'The backend checks both readings, each gateway signs its own (EIP-712), then settleTrade on testnet' : 'The backend checks both readings (3% tolerance); settlement is off for simulated readings'}</li>
-      </ul></div>`;
+    const bt = backendTrade(tradeId);
+    const fin = bt?.finals || {};
+    html = closingCardHTML({
+      tradeId,
+      sellerWh: rd.seller ? rd.seller.wh : fin.seller?.wh ?? null,
+      buyerWh: rd.buyer ? rd.buyer.wh : fin.buyer?.wh ?? null,
+      testnet: state.backend?.stage5b?.settlementMode === 'testnet',
+      orderReached: bt?.stopReason === 'order reached',
+      targetWh: orderOf(tradeId),
+      fmtWh,
+    });
   } else if (ui.momo) {
-    html = momoCheckoutHTML();
+    html = momoCheckoutHTML({ step: ui.momo, amountText: fiat(depositFiat(orderMaxWh())), targetWh: orderWh(), maxWh: orderMaxWh(), phone: MOMO.buyerPhone, esc });
   } else {
-    const can = outage && state.mqtt === 'online';
-    html = `<div class="req-card"><div class="ph"><h2>Request clean power</h2></div>
-      <p style="margin:0;color:var(--muted)">${outage
-        ? `Buy energy from a seller's battery on your street. You pay a small deposit with mobile money, and you are charged only for the energy your meter receives. The rest comes back to your MoMo.`
-        : 'Available during load shedding.'}</p>
-      <div class="momo-quote"><span>Deposit for up to ${MOMO.tradeMaxWh} Wh</span><b>${usd(depositUsd())}</b><small>${usd(MOMO.usdPerKWh)} per kWh · demo rate</small></div>
-      <button class="btn btn-momo btn-big" type="button" data-act="pay-open" ${can ? '' : 'disabled'}><span class="momo-dot" aria-hidden="true">M</span>Request power · pay with MoMo</button>
-      <p class="note"><span class="pill sim">Simulated MoMo</span> No real payment is made. After the deposit, the backend opens the trade on-chain and switches on the buyer request in the Wokwi simulation.</p></div>`;
+    html = requestCardHTML({
+      outage,
+      canRequest: outage && state.mqtt === 'online',
+      targetWh: orderWh(),
+      maxOrderWh: maxOrderWh(),
+      maxWh: orderMaxWh(),
+      depositText: fiat(depositFiat(orderMaxWh())),
+      rateText: fiat(MOMO.pricePerKWh),
+      priceText: fiat(whToFiat(orderWh())),
+      generatorText: fiat(generatorFiat(orderWh(), IMPACT.dieselLPerKWh)),
+      rate: orderRate(),
+    });
   }
   patch('b-action', html);
 
@@ -415,34 +442,29 @@ function buyerParts() {
 
 function receiptHTML(t) {
   const { sellerWh, buyerWh, tamper } = readingsOf(t);
-  const gap = sellerWh != null && buyerWh != null ? gapPct(sellerWh, buyerWh) : null;
   const tol = (t.toleranceBps ?? state.totals?.toleranceBps ?? 300) / 100;
   const bt = backendTrade(t.id);
-  const [pill, label] = t.status === 'Settled' ? ['ok', t.disputed ? 'Resolved · paid' : 'Verified · paid'] : t.status === 'Disputed' ? ['bad', 'Disputed · funds frozen'] : resultOf(t);
-  const signedTxt = bt && !bt.label ? 'Wh · meter final' : 'Wh · signed';
-  return `<div class="ph"><h2>Trade #${t.id}</h2><span style="display:flex;gap:6px;flex-wrap:wrap">${simLabel(t)}<span class="pill ${pill}">${label}</span></span></div>
-  <div class="receipt">
-    <div class="meters">
-      <div><span>Meter A · seller sent</span><b>${fmtWh(sellerWh)}</b> <em>${signedTxt}</em></div><span aria-hidden="true">⇄</span>
-      <div><span>Meter B · shop received</span><b>${fmtWh(buyerWh)}</b> <em>${signedTxt}</em></div>
-    </div>
-    <div class="rows">
-      <div class="row"><span>Difference</span><b style="color:${gap == null ? 'inherit' : gap <= tol ? 'var(--green)' : 'var(--alert)'}">${gap == null ? '–' : `${gap.toFixed(1)}% · ${gap <= tol ? 'within' : 'over'} ${tol}%`}</b></div>
-      ${t.status === 'Settled' ? `<div class="row"><span>Paid for ${wh(t.deliveredWh)}</span><b>${money(t.amount)}</b></div>` : ''}
-      ${tamper ? `<div class="row"><span>Buyer meter</span><b style="color:var(--alert)">tamper switch on</b></div>` : ''}
-    </div>
-    ${t.status === 'Settled' ? `<div class="split">
+  return buyerReceiptHTML(t.id, {
+    pill: t.status === 'Settled' ? ['ok', t.disputed ? 'Resolved · paid' : 'Verified · paid'] : t.status === 'Disputed' ? ['bad', 'Disputed · funds frozen'] : resultOf(t),
+    simLabelHtml: simLabel(t),
+    sellerWh, buyerWh, tamper, tol, fmtWh,
+    signedTxt: bt && !bt.label ? 'Wh · meter final' : 'Wh · signed',
+    gap: sellerWh != null && buyerWh != null ? gapPct(sellerWh, buyerWh) : null,
+    targetWh: bt?.targetWh ?? null,
+    settledRowHtml: t.status === 'Settled' ? `<div class="row"><span>Paid for ${wh(t.deliveredWh)}</span><b>${money(t.amount)}</b></div>` : '',
+    outcomeHtml: t.status === 'Settled' ? `<div class="split">
       <div style="background:var(--green-soft)"><span>Seller</span><b>${money(t.sellerShare)}</b></div>
       <div style="background:var(--blue-soft)"><span>Utility fee</span><b>${money(t.utilityShare)}</b></div>
       <div style="background:var(--amber-soft)"><span>Aegis fee</span><b>${money(t.platformShare)}</b></div></div>
       <div class="row" style="border:0;padding:0"><span>Unused deposit back to buyer</span><b>${money(t.buyerRefund)}</b></div>`
-    : t.status === 'Disputed' ? `<p style="margin:0;font-size:13.5px;color:#7F1D1D">The two meters disagree by more than ${tol}%. The escrow keeps the deposit until the arbiter resolves it, or refunds the buyer after the dispute window.</p>`
-    : t.status === 'Refunded' ? `<div class="row" style="border:0;padding:0"><span>Refunded to buyer</span><b>${money(t.refundAmount)}</b></div>`
-    : bt?.status === 'SIMULATION_VERIFIED' ? `<p style="margin:0;font-size:13.5px;color:var(--muted)">Both Wokwi meters agree within ${tol}%. Settlement is switched off for simulated readings, so nothing was paid. The deposit returns to you when the trade expires.</p>`
-    : bt?.status === 'REJECTED' || bt?.status === 'FAILED' ? `<p style="margin:0;font-size:13.5px;color:#7F1D1D">Not settled: ${esc(bt.reason || 'the evidence failed a check')}. Nothing was paid; the deposit returns to you when the trade expires.</p>` : ''}
-    ${momoBlock(t)}
-    <div class="row" style="border:0;padding:0"><span>Transaction</span><b>${(t.settleTx || t.refundTx || t.openTx) ? `<a class="ext" href="${txUrl(t.settleTx || t.refundTx || t.openTx)}" target="_blank" rel="noopener">${shortHash(t.settleTx || t.refundTx || t.openTx)}</a>` : '–'}</b></div>
-  </div>`;
+      : t.status === 'Disputed' ? `<p style="margin:0;font-size:13.5px;color:#7F1D1D">The two meters disagree by more than ${tol}%. The escrow keeps the deposit until the arbiter resolves it, or refunds the buyer after the dispute window.</p>`
+      : t.status === 'Refunded' ? `<div class="row" style="border:0;padding:0"><span>Refunded to buyer</span><b>${money(t.refundAmount)}</b></div>`
+      : bt?.status === 'SIMULATION_VERIFIED' ? `<p style="margin:0;font-size:13.5px;color:var(--muted)">Both Wokwi meters agree within ${tol}%. Settlement is switched off for simulated readings, so nothing was paid. The deposit returns to you when the trade expires.</p>`
+      : bt?.status === 'REJECTED' || bt?.status === 'FAILED' ? `<p style="margin:0;font-size:13.5px;color:#7F1D1D">Not settled: ${esc(bt.reason || 'the evidence failed a check')}. Nothing was paid; the deposit returns to you when the trade expires.</p>` : '',
+    momoHtml: momoBlock(t),
+    savedHtml: t.status === 'Settled' ? `<div class="row"><span>Saved vs a diesel generator</span><b style="color:var(--green)">${fiat(Math.max(0, generatorFiat(t.deliveredWh, IMPACT.dieselLPerKWh) - whToFiat(t.deliveredWh)))}</b></div>` : '',
+    chainHtml: chainButtonHTML({ openTx: t.openTx, settleTx: t.settleTx, refundTx: t.refundTx, txUrl }),
+  });
 }
 
 const MOMO_STATUS = { SUCCESSFUL: ['ok', 'Successful'], PENDING: ['warn', 'Pending'], HELD: ['bad', 'Held'] };
@@ -452,43 +474,8 @@ function momoPill(st) { const [c, l] = MOMO_STATUS[st] || ['idle', st]; return `
 function momoBlock(t) {
   const recs = momoForTrade(t, shareBps()).filter((r) => r.kind === 'deposit' || r.kind === 'refund');
   return `<div class="momo-box"><div class="momo-head"><span class="momo-dot" aria-hidden="true">M</span><b>Mobile money</b><span class="pill sim">Simulated</span></div>
-    ${recs.map((r) => `<div class="row"><span>${r.label} <small class="mono muted">${r.ref}</small></span><b>${r.amount != null ? usd(r.amount) : '–'} ${momoPill(r.status)}</b></div>`).join('')}
+    ${recs.map((r) => `<div class="row"><span>${r.label} <small class="mono muted">${r.ref}</small></span><b>${r.amount != null ? fiat(r.amount) : '–'} ${momoPill(r.status)}</b></div>`).join('')}
     ${t.status === 'Disputed' ? '<p class="note" style="margin-top:6px">Your deposit stays on hold until the arbiter decides. Nothing is paid out meanwhile.</p>' : ''}</div>`;
-}
-
-/** The simulated MoMo checkout shown before a request opens a trade. */
-function momoCheckoutHTML() {
-  const amount = usd(depositUsd());
-  if (ui.momo === 'confirm') {
-    return `<div class="req-card"><div class="ph"><h2>Pay deposit with MoMo</h2><span class="pill sim">Simulated</span></div>
-      <div class="rows">
-        <div class="row"><span>MoMo number</span><b>${esc(MOMO.buyerPhone)}</b></div>
-        <div class="row"><span>Deposit (up to ${MOMO.tradeMaxWh} Wh)</span><b>${amount}</b></div>
-        <div class="row"><span>You pay for</span><b>energy your meter receives</b></div>
-        <div class="row"><span>Unused deposit</span><b>refunded to your MoMo</b></div>
-      </div>
-      <button class="btn btn-momo btn-big" type="button" data-act="pay-send"><span class="momo-dot" aria-hidden="true">M</span>Send payment request</button>
-      <button class="btn btn-line" type="button" data-act="pay-cancel">Cancel</button></div>`;
-  }
-  if (ui.momo === 'prompt') {
-    return `<div class="req-card"><div class="ph"><h2>Approve on your phone</h2><span class="pill warn">Waiting for you</span></div>
-      <div class="phone" role="group" aria-label="Simulated MoMo approval on the buyer's phone">
-        <div class="phone-bar"><span class="momo-dot" aria-hidden="true">M</span>MoMo · payment request</div>
-        <p><b>Aegis-Grid</b> requests <b>${amount}</b> as a deposit for clean power from your neighbour's battery.</p>
-        <p class="muted" style="font-size:12.5px">You pay only for the energy you receive. The rest is refunded to this number.</p>
-        <div class="pin" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
-        <div class="phone-actions"><button class="btn btn-line" type="button" data-act="pay-decline">Decline</button><button class="btn btn-momo" type="button" data-act="pay-approve">Approve</button></div>
-      </div>
-      <p class="note">This screen stands in for the PIN prompt that MoMo sends to the buyer's phone.</p></div>`;
-  }
-  if (ui.momo === 'processing') {
-    return `<div class="req-card"><div class="ph"><h2>Confirming payment</h2><span class="pill warn">Pending</span></div>
-      <ul class="timeline"><li class="done">Payment request sent to ${esc(MOMO.buyerPhone)}</li><li class="done">Approved on the phone</li><li class="now">Waiting for MoMo to confirm ${amount}</li><li>Bridge opens the trade on-chain</li></ul></div>`;
-  }
-  return `<div class="req-card"><div class="ph"><h2>Payment declined</h2><span class="pill bad">Declined</span></div>
-    <p style="margin:0;color:var(--muted)">No money was taken and no trade was opened.</p>
-    <button class="btn btn-momo btn-big" type="button" data-act="pay-open"><span class="momo-dot" aria-hidden="true">M</span>Try again</button>
-    <button class="btn btn-line" type="button" data-act="pay-cancel">Close</button></div>`;
 }
 
 function tradesTable(list, who) {
@@ -502,6 +489,7 @@ function tradesTable(list, who) {
     return `<tr class="${t.status === 'Disputed' ? 'flag' : ''}">
       <td data-label="Trade" class="mono">#${t.id}</td>
       <td data-label="Opened">${clock(t.openTime)}</td>
+      <td data-label="Order" class="num">${backendTrade(t.id)?.targetWh ?? '–'}</td>
       <td data-label="Seller sent" class="num">${fmtWh(sellerWh)}</td>
       <td data-label="Shop received" class="num">${fmtWh(buyerWh)}</td>
       <td data-label="Difference" class="num">${gap == null ? '–' : gap.toFixed(1) + '%'}</td>
@@ -509,7 +497,7 @@ function tradesTable(list, who) {
       <td data-label="Status"><span class="pill ${resultOf(t)[0]}">${resultOf(t)[1]}</span></td>
       <td data-label="Tx">${(t.settleTx || t.openTx) ? `<a class="ext" href="${txUrl(t.settleTx || t.openTx)}" target="_blank" rel="noopener">${shortHash(t.settleTx || t.openTx)}</a>` : '–'}</td></tr>`;
   }).join('');
-  return `<div class="tbl-wrap"><table><thead><tr><th>Trade</th><th>Opened</th><th class="num">Seller sent (Wh)</th><th class="num">Shop received (Wh)</th><th class="num">Difference</th><th class="num">${who === 'seller' ? 'Your share' : 'Paid'}</th><th>Status</th><th>Tx</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  return `<div class="tbl-wrap"><table><thead><tr><th>Trade</th><th>Opened</th><th class="num">Order (Wh)</th><th class="num">Seller sent (Wh)</th><th class="num">Shop received (Wh)</th><th class="num">Difference</th><th class="num">${who === 'seller' ? 'Your share' : 'Paid'}</th><th>Status</th><th>Tx</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
 // ================================================================== SELLER
@@ -573,12 +561,13 @@ function sellerParts() {
   const t = tid ? state.trades[tid] : null;
   const price = pricePerWhOf(t);
   const { util, plat } = shareBps();
-  const sent = Number(s?.tradeWh || 0);
+  const sent = tid ? liveTradeWh(tid).sent : 0;
+  const order = tid ? orderOf(tid) : null;
   patch('s-selling', exporting || tid
     ? `<div class="ph"><h2>Selling now · trade #${tid}</h2><span class="pill ${exporting ? 'ok' : 'warn'}">${exporting ? 'Discharging' : esc(SELLER_STATUS[s?.status] || 'Open')}</span></div>
       <div class="live-num"><b class="mono">${Math.round(Number(s?.exportW || 0))}</b><span>W to the buyer's shop</span></div>
       <div class="flowbar" aria-hidden="true" style="margin:14px 0"><i></i></div>
-      <div class="rows"><div class="row"><span>Sent this trade</span><b>${sent.toFixed(1)} Wh</b></div>
+      <div class="rows">${order ? `<div class="row"><span>Shop's order</span><b>${order} Wh received</b></div>` : ''}<div class="row"><span>Sent this trade</span><b>${sent.toFixed(1)} Wh</b></div>
         <div class="row"><span>Your share so far (est.)</span><b>${price != null ? money((BigInt(Math.floor(sent * 0.98)) * price * BigInt(10000 - util - plat)) / 10000n) : '–'}</b></div>
         <div class="row"><span>Battery reserve</span><b>stops at ${s?.minSocPct ?? 5}%</b></div></div>
       <p class="note">You are paid for what the shop's meter receives (about 2% less than you send, cable loss).</p>`
@@ -598,8 +587,8 @@ function sellerParts() {
       <div class="row"><span>In the contract, ready to withdraw</span><b>${money(bal)}</b></div>
     </div>
     <div class="momo-box" style="margin-top:12px"><div class="momo-head"><span class="momo-dot" aria-hidden="true">M</span><b>Paid to your MoMo</b><span class="pill sim">Simulated</span></div>
-      <div class="row"><span>${esc(MOMO.sellerPhone)}</span><b>${usd(settled.reduce((a, x) => a + (momoForTrade(x, shareBps()).find((r) => r.kind === 'payout')?.amount || 0), 0))}</b></div>
-      ${settled.slice(0, 4).map((x) => { const r = momoForTrade(x, shareBps()).find((q) => q.kind === 'payout'); return `<div class="row"><span>Trade #${x.id} <small class="mono muted">${r.ref}</small></span><b>${usd(r.amount)} ${momoPill(r.status)}</b></div>`; }).join('')}
+      <div class="row"><span>${esc(MOMO.sellerPhone)}</span><b>${fiat(settled.reduce((a, x) => a + (momoForTrade(x, shareBps()).find((r) => r.kind === 'payout')?.amount || 0), 0))}</b></div>
+      ${settled.slice(0, 4).map((x) => { const r = momoForTrade(x, shareBps()).find((q) => q.kind === 'payout'); return `<div class="row"><span>Trade #${x.id} <small class="mono muted">${r.ref}</small></span><b>${fiat(r.amount)} ${momoPill(r.status)}</b></div>`; }).join('')}
       ${open ? `<div class="row"><span>Trade #${open.id}</span><b>after settlement ${momoPill('PENDING')}</b></div>` : ''}
     </div>
     <button class="btn btn-green" type="button" data-act="withdraw" style="margin-top:12px;width:100%" ${canWithdraw && ui.busy !== 'withdraw' ? '' : 'disabled'}>${ui.busy === 'withdraw' ? 'Confirm in your wallet…' : 'Withdraw earnings'}</button>
@@ -727,7 +716,7 @@ function opsParts() {
   patch('o-oracle-sub', `tolerance ${pct(T?.toleranceBps ?? 300)} · ${list.length} trades · click a trade for its receipt`);
   const isOwner = same(state.wallet?.address, T?.owner);
   patch('o-oracle', !list.length ? (state.historyLoaded ? '<p class="empty">No trades yet.</p>' : '<p class="empty">Loading trades from the contract…</p>') :
-    `<div class="tbl-wrap"><table><thead><tr><th>Trade</th><th>Opened</th><th class="num">Seller (Wh)</th><th class="num">Buyer (Wh)</th><th class="num">Gap</th><th>Result</th><th>Tx</th><th>Action</th><th><span class="sr-only">Receipt</span></th></tr></thead><tbody>
+    `<div class="tbl-wrap"><table><thead><tr><th>Trade</th><th>Opened</th><th class="num">Order (Wh)</th><th class="num">Seller (Wh)</th><th class="num">Buyer (Wh)</th><th class="num">Gap</th><th>Result</th><th>Tx</th><th>Action</th><th><span class="sr-only">Receipt</span></th></tr></thead><tbody>
     ${oracle.map((t) => {
       const { sellerWh, buyerWh } = readingsOf(t);
       const gap = sellerWh != null && buyerWh != null ? gapPct(sellerWh, buyerWh) : null;
@@ -738,6 +727,7 @@ function opsParts() {
         : `<span class="muted" style="font-size:12.5px">owner resolves</span>`;
       else if (t.status === 'Open' && expired) action = `<button class="btn btn-line btn-sm" type="button" data-act="refund" data-id="${t.id}">Refund buyer</button>`;
       return `<tr class="${t.status === 'Disputed' ? 'flag' : ''} rc-link" data-act="receipt" data-id="${t.id}" tabindex="0" title="Open the receipt of trade #${t.id}"><td data-label="Trade" class="mono">#${t.id}</td><td data-label="Opened">${clock(t.openTime)}</td>
+        <td data-label="Order (Wh)" class="num">${backendTrade(t.id)?.targetWh ?? '–'}</td>
         <td data-label="Seller (Wh)" class="num">${fmtWh(sellerWh)}</td><td data-label="Buyer (Wh)" class="num">${fmtWh(buyerWh)}</td>
         <td data-label="Gap" class="num" style="color:${gap != null && gap > (T?.toleranceBps ?? 300) / 100 ? 'var(--alert)' : 'inherit'}">${gap == null ? '–' : gap.toFixed(1) + '%'}</td>
         <td data-label="Result"><span class="pill ${resultOf(t)[0]}">${resultOf(t)[1]}</span>${backendTrade(t.id)?.label ? ' <span class="pill sim" title="SIMULATED_TESTNET_SETTLEMENT">sim</span>' : ''}</td>
@@ -767,15 +757,15 @@ function opsParts() {
 
   patch('o-momo', `<div class="ph"><h2>Mobile money ledger</h2><span class="pill sim">Simulated MoMo</span></div>
     <div class="kpis" style="margin-bottom:12px">
-      <div class="kpi"><span>Collected (deposits)</span><b style="font-size:18px">${usd(tot('deposit'))}</b></div>
-      <div class="kpi"><span>Paid to sellers</span><b style="font-size:18px">${usd(tot('payout'))}</b></div>
-      <div class="kpi"><span>Refunded to buyers</span><b style="font-size:18px">${usd(tot('refund'))}</b></div>
-      <div class="kpi"><span>Held in disputes</span><b style="font-size:18px">${usd(tot('deposit', 'HELD'))}</b></div>
+      <div class="kpi"><span>Collected (deposits)</span><b style="font-size:18px">${fiat(tot('deposit'))}</b></div>
+      <div class="kpi"><span>Paid to sellers</span><b style="font-size:18px">${fiat(tot('payout'))}</b></div>
+      <div class="kpi"><span>Refunded to buyers</span><b style="font-size:18px">${fiat(tot('refund'))}</b></div>
+      <div class="kpi"><span>Held in disputes</span><b style="font-size:18px">${fiat(tot('deposit', 'HELD'))}</b></div>
     </div>
     ${ledger.length ? `<div class="tbl-wrap"><table><thead><tr><th>Time</th><th>Trade</th><th>Type</th><th>Number</th><th class="num">Amount</th><th>Status</th><th>Reference</th></tr></thead><tbody>
-      ${ledger.slice(0, 16).map((r) => `<tr class="${r.status === 'HELD' ? 'flag' : ''}"><td data-label="Time">${clock(r.time)}</td><td data-label="Trade" class="mono">#${r.tradeId}</td><td data-label="Type">${r.label}</td><td data-label="Number" class="mono">${esc(r.phone)}</td><td data-label="Amount" class="num">${usd(r.amount)}</td><td data-label="Status">${momoPill(r.status)}</td><td data-label="Reference" class="mono">${r.ref}</td></tr>`).join('')}
+      ${ledger.slice(0, 16).map((r) => `<tr class="${r.status === 'HELD' ? 'flag' : ''}"><td data-label="Time">${clock(r.time)}</td><td data-label="Trade" class="mono">#${r.tradeId}</td><td data-label="Type">${r.label}</td><td data-label="Number" class="mono">${esc(r.phone)}</td><td data-label="Amount" class="num">${fiat(r.amount)}</td><td data-label="Status">${momoPill(r.status)}</td><td data-label="Reference" class="mono">${r.ref}</td></tr>`).join('')}
     </tbody></table></div>` : '<p class="empty">No mobile money movements yet.</p>'}
-    <p class="note">USD amounts follow the on-chain trades at a fixed demo rate of ${usd(MOMO.usdPerKWh)} per kWh. Production would use the MoMo Collections and Disbursements APIs through a server, with the platform funding the escrow.</p>`);
+    <p class="note">Cedi amounts follow the on-chain trades at a fixed demo price of ${fiat(MOMO.pricePerKWh)} per kWh (above the grid tariff, below a diesel generator). Production would use the MoMo Collections and Disbursements APIs through a server, with the platform funding the escrow.</p>`);
 
   patch('o-balances', `<div class="ph"><h2>Balances to withdraw</h2><small>pull payments</small></div>
     <div class="rows">${accts.map(([n, a]) => {
@@ -825,7 +815,7 @@ main.addEventListener('click', async (e) => {
   const sim = (patchObj, msg) => { if (simControl(patchObj)) { if (msg) toast(msg); } else toast('Not connected to MQTT yet.'); };
   switch (act) {
     case 'outage-on': return sim({ outage: true }, 'Load shedding started (mock meters).');
-    case 'request-on': return sim({ requesting: true }, 'Request sent. The bridge opens a trade on-chain.');
+    case 'request-on': return sim({ requesting: true, targetWh: orderWh() }, `Request for ${orderWh()} Wh sent. The bridge opens a trade on-chain.`);
     case 'pay-open': ui.momo = 'confirm'; return render();
     case 'pay-cancel': ui.momo = null; return render();
     case 'pay-send': ui.momo = 'prompt'; return render();
@@ -834,7 +824,7 @@ main.addEventListener('click', async (e) => {
       ui.momo = 'processing'; render();
       setTimeout(() => {
         ui.momo = null;
-        if (simControl({ requesting: true })) toast(`MoMo deposit of ${usd(depositUsd())} received (simulated). Opening the trade…`);
+        if (simControl({ requesting: true, targetWh: orderWh() })) toast(`MoMo deposit of ${fiat(depositFiat(orderMaxWh()))} received (simulated). Opening the trade for ${orderWh()} Wh…`);
         else toast('Payment confirmed, but MQTT is offline: the request could not be sent.');
         render();
       }, 1600);
@@ -842,7 +832,13 @@ main.addEventListener('click', async (e) => {
     case 'request-off': return sim({ requesting: false }, 'Stopping. Both meters will sign their final readings.');
     case 't-outage': return sim({ outage: state.grid !== 'OUTAGE' });
     case 't-day': return sim({ pvW: s && Number(s.pvW) > 0 ? 0 : 800 });
-    case 't-request': return sim({ requesting: !b?.requesting });
+    case 't-request': return sim(b?.requesting ? { requesting: false } : { requesting: true, targetWh: orderWh() });
+    case 'wh-minus': case 'wh-plus': case 'wh-set': {
+      const { step } = orderSteps(orderRate());
+      ui.targetWh = clampOrder(act === 'wh-set' ? Number(btn.dataset.wh) : orderWh() + (act === 'wh-plus' ? step : -step), maxOrderWh(), orderRate());
+      localSet('aegis.order', String(ui.targetWh));
+      return render();
+    }
     case 't-tamper': return sim({ tamper: !b?.tamper }, !b?.tamper ? 'Buyer meter will under-report by 40%.' : 'Buyer meter honest again.');
     case 't-backup': return sim({ backup: !s?.backupAllowed }, !s?.backupAllowed ? 'Emergency backup on: community loads may use the battery.' : 'Emergency backup off: the battery serves the shop only.');
     case 'engine-mock': chooseEngine('mock'); syncEngineSwitch(document.querySelectorAll('[data-engine]')); return sim({ engine: 'mock' }, 'Source: mock. The Wokwi-compatible mock publishes again.');

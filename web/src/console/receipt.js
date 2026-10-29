@@ -1,7 +1,7 @@
 // Dual-meter receipt for one trade, opened from a row of the operator Oracle table.
 // It joins the two signed meter readings (what Meter A sent, what Meter B received), the contract's
 // verdict and the simulated MoMo money movements (same numbers as the ledger, from momoForTrade).
-import { momoForTrade, usd, whToUsd, depositUsd } from '../lib/momo.js';
+import { momoForTrade, fiat, whToFiat, depositFiat } from '../lib/momo.js';
 import { MOMO } from '../lib/config.js';
 import { esc } from '../lib/format.js';
 
@@ -11,10 +11,25 @@ const STATUS = {
   Open: ['warn', 'Open'],
   Refunded: ['idle', 'Refunded'],
 };
-// fractions of a cent would round to $0.00 and look like nothing was paid
-const cash = (v) => (v != null && v > 0 && v < 0.001 ? '&lt;$0.001' : usd(v));
+const cash = fiat;
 // whole Wh as on-chain; firmware finals (Stage 5B) keep two decimals
 const whTxt = (v) => (v == null ? '–' : Number.isInteger(Number(v)) ? Number(v).toLocaleString('en-US') : Number(v).toFixed(2));
+
+const ICO = {
+  cube: '<path d="M21 16V8a2 2 0 0 0-1-1.7l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.7l7 4a2 2 0 0 0 2 0l7-4a2 2 0 0 0 1-1.7Z"/><path d="M3.3 7 12 12l8.7-5M12 22V12"/>',
+  out: '<path d="M14 4h6v6"/><path d="M20 4 10 14"/><path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/>',
+};
+const ico = (d) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
+
+/**
+ * "View on blockchain" button: opens the trade's latest transaction (settlement, refund, else the deposit) on the
+ * block explorer. x: { openTx, settleTx, refundTx, txUrl(hash) }
+ */
+export function chainButtonHTML(x) {
+  const [hash, what] = x.settleTx ? [x.settleTx, 'settlement'] : x.refundTx ? [x.refundTx, 'refund'] : [x.openTx, 'deposit'];
+  if (!hash) return '';
+  return `<a class="btn btn-line btn-sm chain-btn" href="${x.txUrl(hash)}" target="_blank" rel="noopener" title="Open the ${what} transaction on the Base Sepolia block explorer">${ico(ICO.cube)}View on blockchain${ico(ICO.out)}</a>`;
+}
 
 /** Drawer header: which trade, and newer / older buttons (the Oracle table is the full list). */
 export function receiptNav(list, selectedId) {
@@ -102,17 +117,16 @@ export function receiptHTML(t, r, o) {
   const recs = momoForTrade(t, o.shares);
   const amt = (k) => recs.find((x) => x.kind === k)?.amount;
   const paidWh = t.status === 'Settled' ? t.deliveredWh : null;
-  const paid = paidWh != null ? whToUsd(paidWh) : null;
+  const paid = paidWh != null ? whToFiat(paidWh) : null;
   const sp = 10000 - o.shares.util - o.shares.plat;
   const money = [
-    ['Deposit from buyer', `${usd(depositUsd(t.maxWh))}`, t.status === 'Disputed' ? 'held in escrow' : `up to ${whTxt(t.maxWh || MOMO.tradeMaxWh)} Wh`, ''],
-    ['Energy billed', paid != null ? cash(paid) : '–', paidWh != null ? `${whTxt(paidWh)} Wh × ${usd(MOMO.usdPerKWh)}/kWh` : t.status === 'Disputed' ? 'frozen' : offDone ? 'not settled' : 'not yet', ''],
+    ['Deposit from buyer', `${fiat(depositFiat(t.maxWh))}`, t.status === 'Disputed' ? 'held in escrow' : `up to ${whTxt(t.maxWh || MOMO.tradeMaxWh)} Wh`, ''],
+    ['Energy billed', paid != null ? cash(paid) : '–', paidWh != null ? `${whTxt(paidWh)} Wh × ${fiat(MOMO.pricePerKWh)}/kWh` : t.status === 'Disputed' ? 'frozen' : offDone ? 'not settled' : 'not yet', ''],
     ['Seller receives', paid != null ? cash(paid * sp / 10000) : '–', `${sp / 100}% · ${esc(MOMO.sellerPhone)}`, 'em'],
     ['Utility grid fee', paid != null ? cash(paid * o.shares.util / 10000) : '–', `${o.shares.util / 100}%`, ''],
     ['Aegis platform fee', paid != null ? cash(paid * o.shares.plat / 10000) : '–', `${o.shares.plat / 100}%`, ''],
     ['Refund to buyer', amt('refund') != null ? cash(amt('refund')) : '–', t.status === 'Settled' || t.status === 'Refunded' ? esc(MOMO.buyerPhone) : t.status === 'Disputed' ? 'held in escrow' : offDone ? 'full deposit, after the trade expires' : 'after settlement', 'em'],
   ];
-  const tx = t.settleTx || t.refundTx || t.openTx;
   const when = t.settleTime || t.refundTime || t.openTime;
 
   return `<article class="rc" aria-label="Receipt for trade ${t.id}">
@@ -124,12 +138,13 @@ export function receiptHTML(t, r, o) {
       <div class="rc-energy">
         <div class="rc-meters">
           <div class="rc-m"><span>METER_A · Seller</span><b class="mono">${whTxt(sent)}<small> Wh</small></b><em>Energy sent · Resident A</em></div>
-          <div class="rc-arrow" aria-hidden="true"><svg viewBox="0 0 48 12"><path d="M0 6h44M38 1l6 5-6 5" fill="none" stroke="currentColor" stroke-width="1.6"/></svg><small class="mono">${lostWh == null ? '' : `−${whTxt(lostWh)} Wh`}</small></div>
+          <div class="rc-arrow" aria-hidden="true"><svg viewBox="0 0 48 12"><path d="M0 6h44M38 1l6 5-6 5" fill="none" stroke="currentColor" stroke-width="1.6"/></svg><small class="mono">${lostWh == null ? '' : lostWh > 0 ? `−${whTxt(lostWh)} Wh` : '0 Wh'}</small></div>
           <div class="rc-m"><span>METER_B · Buyer</span><b class="mono">${whTxt(got)}<small> Wh</small></b><em>Energy received · UMKM B</em></div>
         </div>
         <div class="rc-rows">
           <div><span>Difference</span><b class="mono ${gap == null ? '' : within ? 'pos' : 'neg'}">${gap == null ? '–' : `${gap.toFixed(1)}%`}</b></div>
           <div><span>Verification tolerance</span><b class="mono">${o.tolPct}%</b></div>
+          ${bt?.targetWh ? `<div><span>Buyer's order</span><b class="mono">${bt.targetWh} Wh</b></div><div><span>Escrow</span><b class="mono">${t.maxWh ?? bt.maxWh} Wh</b></div>` : ''}
           <div><span>Simulated line loss</span><b class="mono">${o.lossPct}%</b></div>
           <div><span>Battery after trade</span><b class="mono">${r.socAfter == null ? '–' : `${(r.socAfter / 100).toFixed(1)}%`}</b></div>
         </div>
@@ -138,7 +153,7 @@ export function receiptHTML(t, r, o) {
       <div class="rc-money">
         <div class="rc-mh"><span class="momo-dot" aria-hidden="true">M</span><b>Money</b><span class="pill sim">Simulated MoMo</span></div>
         ${money.map(([k, v, sub, cls]) => `<div class="rc-mr ${cls}"><span>${k}<small>${sub}</small></span><b class="mono">${v}</b></div>`).join('')}
-        <div class="rc-tx">${tx ? (o.txUrl ? `<a class="ext" href="${o.txUrl(tx)}" target="_blank" rel="noopener">${esc(tx.slice(0, 10))}…${esc(tx.slice(-4))}</a>` : `<span class="mono">${esc(tx.slice(0, 10))}…${esc(tx.slice(-4))}</span>`) : ''}</div>
+        ${chainButtonHTML({ openTx: t.openTx, settleTx: t.settleTx, refundTx: t.refundTx, txUrl: o.txUrl })}
       </div>
     </div>
   </article>`;

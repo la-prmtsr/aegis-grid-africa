@@ -25,7 +25,9 @@ Trade statuses: `PENDING` → `ACTIVE` → `STOPPED` → `AWAITING_EVIDENCE` →
 
 **Energy per trade.** The 5B.2 firmware counts in real time: at `targetW=500` the 5 Wh minimum takes about 36 s (Faras's `test-003` at about 100 W gave 2.47 Wh). Whole Wh are coarse for small trades: 33.9 vs 32.95 Wh passes on fractions (2.8%) but 33 vs 32 fails as uint64 (3.03%), and the backend then does not submit.
 
-**Tamper** is a switch in Wokwi METER_B; the dashboard tile is disabled with the real firmware (it works with the mock). A tampered trade fails the fractional check and is `REJECTED` before anything is sent on-chain.
+**Controls from the dashboard** (formats recorded from Unity on Faras's broker, 29 Oct): every control is a plain payload under `demo/control/`: `mode` → `remote`, `grid_outage` → `1`/`0`, `emergency_backup` → `1`/`0`, `buyer_request` → `1`/`0`, `pv_w` and `load_w` → watts. Set them in `.env` (`WOKWI_MODE_REMOTE=remote`, `WOKWI_CTRL_OUTAGE_TOPIC=grid_outage`, `WOKWI_CTRL_OUTAGE_ON=1`, `WOKWI_CTRL_OUTAGE_OFF=0`, same pattern for `BACKUP`, `BUYER`, and `WOKWI_CTRL_PV_TOPIC=pv_w` / `WOKWI_CTRL_PV_VALUE={value}`, `WOKWI_CTRL_LOAD_TOPIC=load_w` / `WOKWI_CTRL_LOAD_VALUE={value}`).
+
+**Tamper** is a switch of the METER_B firmware: with `WOKWI_CTRL_TAMPER_TOPIC=meter_b_tamper` (`_ON=1`, `_OFF=0`) the dashboard tile publishes `demo/control/meter_b_tamper`, already covered by the bridge. METER_B then reports 60% of its value with `"tamper":true`. Without that setting the tile is disabled with the real firmware (it always works with the mock). A tampered trade fails the fractional check and is `REJECTED` before anything is sent on-chain.
 
 ## Who owns what
 
@@ -165,3 +167,26 @@ With the mock, the three backend processes and contract v2 on anvil: an honest t
 ## Security notes
 
 The public broker has no authentication: anyone could publish on these topics. Readings cannot be forged (the relayer and the contract check the meter signatures), but someone could send `app/request` and open a demo trade with test ETH. Production needs per-device credentials and TLS.
+
+## Stage 6: order size ("takaran") and auto-stop
+
+The buyer chooses how much energy to receive before paying. The rules live in `bridge/src/v2/sizing.js` and
+`web/src/lib/sizing.js` (identical, checked by `bridge/test/sizing.test.mjs`) and depend on how fast METER_A's
+trade counter `p2p_trade_wh` runs, set with `FIRMWARE_ENERGY_SCALE` in `.env`:
+
+| `FIRMWARE_ENERGY_SCALE` | Counter | Orders | 500 W delivers | Stop rule |
+|---|---|---|---|---|
+| `1` (default, Faras's 5B.2 firmware) | real time, about 0.14 Wh per report | 10, 20, 50, 100 … Wh (steps of 10) | 10 Wh in about 72 s | just past the order (+0.02 Wh) |
+| `60` (if the firmware counts at 60×) | about 8.3 Wh per report | 100, 250, 500 Wh (steps of 50) | 100 Wh in about 12 s | half a report early |
+
+- The app sends `app/request {"requesting":true,"targetWh":20}`. The relayer opens the escrow for
+  `maxWh = order + ceil(order × line loss) + ceil(2 reports) + 2` (20 Wh → 24 Wh in real time) and publishes the
+  rate as `params.orderRate` in `backend/status`, so the dashboard shows the same steps and deposit.
+- The relayer follows `p2p_trade_wh`, estimates what METER_B received (× 0.98) and sends `trade/cmd stop` at the
+  stop point above. In real time the finals then land just above a whole Wh, so the contract's whole-Wh 3% check
+  always passes (live test trade 8, stopped at a random point: 23.19 vs 22.73 Wh became 23 vs 22 Wh = 4.3%, rejected).
+  At 60× the 100 Wh minimum does the same job: from about 67 Wh up honest readings always pass.
+- A buyer who presses Stop early stops at a random point; a small trade can then still be rejected and the deposit
+  is refunded after expiry.
+- The buyer pays only for what METER_B received. Prices in the dashboard are in Ghana cedi (`VITE_PRICE_PER_KWH`,
+  default GH₵3.50/kWh, a demo assumption between the grid tariff and a diesel generator).

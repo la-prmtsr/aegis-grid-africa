@@ -17,6 +17,7 @@ import { controlMessage } from './control.js';
 import { STATUS as T, LABEL_TESTNET, validateFinal, verifyPair, chainIdOf, dedupeKey, toContractWh } from './evidence.js';
 import { openEvidenceStore } from './evidence-store.js';
 import { startStatusApi } from './status-api.js';
+import { clampOrder, maxWhFor, receivedEstimate, orderReached } from './sizing.js';
 
 const log = logger('relayer');
 const c = await connectChain();
@@ -24,7 +25,8 @@ const link = (hash) => (c.chainId === 84532n ? `${EXPLORER}/tx/${hash}` : hash);
 const same = (a, b) => a && b && a.toLowerCase() === b.toLowerCase();
 const FIVE_B = STAGE5B.evidence === 'wokwi-final';
 const TESTNET = STAGE5B.settlementMode === 'testnet';
-const tamperAvailable = !FIVE_B || process.env.AEGIS_MOCK === '1'; // real 5B.2 firmware: tamper is set in Wokwi
+// Tamper is a switch of the meter itself: the v2 software Meter B, the mock, or METER_B firmware via WOKWI_CTRL_TAMPER_*
+const tamperAvailable = !FIVE_B || process.env.AEGIS_MOCK === '1' || Boolean(WOKWI_CONTROL.tamper.topic);
 
 log(`chain ${c.chainId}, escrow ${chain.escrow}, contract battery reserve ${c.minSocBps / 100}%`);
 log(`evidence: ${STAGE5B.evidence}, settlement: ${STAGE5B.settlementMode}${TESTNET ? ` (${LABEL_TESTNET}, minimum ${STAGE5B.minSettleWh} Wh)` : ' (verify only, no settleTrade)'}`);
@@ -39,6 +41,7 @@ const S = {
   grid: null,
   wokwiRequest: false,
   appRequest: false,
+  appTargetWh: null, // Stage 6: the buyer's order (Wh to receive), from app/request
   busy: false,
   needRelease: false, // after a trade ends, the request must be released before a new one opens
   active: null, // the trade in progress (both flows)
@@ -87,6 +90,7 @@ const subs = [topics.telemetry('METER_A'), topics.telemetry('METER_B'), topics.a
 const { publish } = connect('relayer', subs, async (topic, msg) => {
   if (topic === topics.telemetry('METER_A')) {
     S.grid = msg.grid;
+    await trackOrder(msg);
     const req = Boolean(msg.buyerRequest);
     const changed = req !== S.wokwiRequest;
     S.wokwiRequest = req;
@@ -98,7 +102,8 @@ const { publish } = connect('relayer', subs, async (topic, msg) => {
     return undefined;
   }
   if (topic === topics.appRequest && typeof msg.requesting === 'boolean') {
-    log(`app: shop ${msg.requesting ? 'requests clean power' : 'stops'}`);
+    if (msg.requesting) S.appTargetWh = msg.targetWh == null ? null : clampOrder(msg.targetWh, Number(TRADE.maxWh), ORDER_RATE);
+    log(`app: shop ${msg.requesting ? `requests clean power${S.appTargetWh ? ` (order ${S.appTargetWh} Wh)` : ''}` : 'stops'}`);
     S.appRequest = msg.requesting;
     if (!msg.requesting && !FIVE_B) wokwiControl('buyer', false);
     return evaluate();
@@ -106,6 +111,7 @@ const { publish } = connect('relayer', subs, async (topic, msg) => {
   if (topic === topics.appDemo) {
     if (typeof msg.outage === 'boolean') wokwiControl('outage', msg.outage);
     if (typeof msg.backup === 'boolean') wokwiControl('backup', msg.backup);
+    if (typeof msg.tamper === 'boolean' && FIVE_B && WOKWI_CONTROL.tamper.topic) wokwiControl('tamper', msg.tamper);
     if (Number.isFinite(msg.pvW)) wokwiControl('pv', msg.pvW);
     if (Number.isFinite(msg.communityLoadW)) wokwiControl('load', msg.communityLoadW);
     return undefined;
@@ -128,6 +134,37 @@ function wokwiControl(kind, input) {
   publish(topics.wokwiControl(m.sub), m.payload);
   log(`Wokwi control ${kind} -> ${label}`);
   return true;
+}
+
+/** Stage 6: trade power, counter speed and cable loss decide the order steps, the stop point and the escrow margin. */
+const ORDER_RATE = { lineLoss: SIM.lineLoss, powerW: STAGE5B.targetW, energyScale: FIVE_B ? STAGE5B.energyScale : SIM.timeScale };
+
+/** Stage 6: escrow size for the current request. App orders are sized; a Wokwi-button trade uses TRADE_MAX_WH. */
+function orderSize(fromApp) {
+  const targetWh = fromApp && S.appTargetWh ? S.appTargetWh : null;
+  return { targetWh, maxWh: targetWh ? maxWhFor(targetWh, ORDER_RATE) : Number(TRADE.maxWh) };
+}
+
+/**
+ * Stage 6: live progress of the active trade from METER_A's counter (firmware p2p_trade_wh, or the gateway's own
+ * count), and STOP when the buyer's estimated received energy reaches the order.
+ */
+async function trackOrder(msg) {
+  const a = S.active;
+  if (!a) return;
+  const sellerWh = FIVE_B
+    ? (msg.p2pTradeId === String(a.id) && Number.isFinite(msg.p2pTradeWh) ? msg.p2pTradeWh : null)
+    : (Number(msg.tradeId) === a.id ? Number(msg.tradeWh) : null);
+  if (sellerWh === null) return;
+  a.liveSellerWh = sellerWh;
+  a.liveBuyerWh = receivedEstimate(sellerWh, SIM.lineLoss);
+  if (a.targetWh && !a.stopping && orderReached(a.liveBuyerWh, a.targetWh, ORDER_RATE)) {
+    log(`trade ${a.id}: order of ${a.targetWh} Wh reached (about ${a.liveBuyerWh.toFixed(2)} Wh received) -> STOP`);
+    S.appRequest = false; // the order is complete: the shop's request ends with it (no new trade opens)
+    S.needRelease = false;
+    if (FIVE_B) await stop5b(a, 'order reached');
+    else await stop('order reached');
+  }
 }
 
 async function evaluate() {
@@ -169,11 +206,12 @@ async function open5b() {
       log(S.notice);
       return undefined;
     }
-    log(`buyer request (app) during outage -> openTrade, deposit ${TRADE.maxWh} Wh ...`);
-    const { id, txHash } = await c.openTrade();
+    const size = orderSize(true);
+    log(`buyer request (app) during outage -> openTrade${size.targetWh ? `, order ${size.targetWh} Wh` : ''}, escrow for ${size.maxWh} Wh ...`);
+    const { id, txHash } = await c.openTrade(size.maxWh);
     const t = await c.tradeInfo(id, 'None');
     rec = {
-      id, tradeId: String(id), source: 'app', openTx: txHash, openedAt: Date.now(), status: null,
+      id, tradeId: String(id), source: 'app', openTx: txHash, openedAt: Date.now(), status: null, ...size, liveSellerWh: 0, liveBuyerWh: 0,
       sellerMeter: t.sellerMeter, buyerMeter: t.buyerMeter, approvals: { buyer: true, seller: true },
       stopping: false, finals: { seller: null, buyer: null }, signed: { seller: null, buyer: null },
       verify: null, label: null, settlementMode: STAGE5B.settlementMode, timer: null, // label set only when a testnet tx is sent
@@ -181,7 +219,7 @@ async function open5b() {
     trades.set(id, rec);
     S.active = rec;
     S.notice = null;
-    setStatus(rec, T.PENDING, { openTx: txHash });
+    setStatus(rec, T.PENDING, { openTx: txHash, targetWh: size.targetWh, maxWh: size.maxWh });
     log(`trade ${id} OPENED ${link(txHash)}`);
     // REMOTE mode first, then START with the escrow id. Never a hand-typed test id.
     await command(topics.wokwiControl(STAGE5B.modeTopic), STAGE5B.modeRemote);
@@ -256,7 +294,7 @@ async function verify5b(rec) {
   const r = verifyPair(rec.finals.seller, rec.finals.buyer, {
     toleranceBps: SIM.toleranceBps,
     minSettleWh: TESTNET ? STAGE5B.minSettleWh : 0,
-    maxWh: Number(TRADE.maxWh),
+    maxWh: rec.maxWh ?? Number(TRADE.maxWh),
     minSocBps: c.minSocBps,
     integer: TESTNET,
   });
@@ -330,7 +368,10 @@ const summary = (rec) => ({
   settlementMode: rec.settlementMode,
   evidence: 'wokwi-final',
   reason: rec.reason ?? null,
+  stopReason: rec.stopReason ?? null,
   targetW: rec.targetW ?? null,
+  targetWh: rec.targetWh ?? null,
+  maxWh: rec.maxWh ?? null,
   openTx: rec.openTx,
   settleTx: rec.settleTx ?? null,
   finals: {
@@ -354,18 +395,19 @@ async function open() {
       log(S.notice);
       return undefined;
     }
-    log(`buyer request (${source}) during outage -> openTrade, deposit ${TRADE.maxWh} Wh ...`);
-    const { id, txHash } = await c.openTrade();
+    const size = orderSize(source === 'app');
+    log(`buyer request (${source}) during outage -> openTrade${size.targetWh ? `, order ${size.targetWh} Wh` : ''}, escrow for ${size.maxWh} Wh ...`);
+    const { id, txHash } = await c.openTrade(size.maxWh);
     const t = await c.tradeInfo(id, 'None');
     S.active = {
-      id, source, openTx: txHash, sellerMeter: t.sellerMeter, buyerMeter: t.buyerMeter,
+      id, source, openTx: txHash, sellerMeter: t.sellerMeter, buyerMeter: t.buyerMeter, ...size, liveSellerWh: 0, liveBuyerWh: 0,
       approvals: { buyer: true, seller: true }, stopping: false, seller: null, buyer: null, timer: null,
     };
     S.notice = null;
     log(`trade ${id} OPENED ${link(txHash)}`);
     // Meter B first, so it never misses an interval Meter A counts.
-    await publish(topics.cmd('METER_B'), { cmd: 'start', tradeId: id, maxWh: Number(TRADE.maxWh) });
-    await publish(topics.cmd('METER_A'), { cmd: 'start', tradeId: id, maxWh: Number(TRADE.maxWh) });
+    await publish(topics.cmd('METER_B'), { cmd: 'start', tradeId: id, maxWh: size.maxWh });
+    await publish(topics.cmd('METER_A'), { cmd: 'start', tradeId: id, maxWh: size.maxWh });
     if (source === 'app' && !wokwiControl('buyer', true)) {
       S.notice = 'Wokwi buyer control is not configured: press the buyer request button in Wokwi/Unity so power flows';
     }
@@ -424,7 +466,7 @@ async function finish(a) {
     sellerSigOk: valid(a.seller, a.sellerMeter),
     buyerSigOk: valid(a.buyer, a.buyerMeter),
     approvals: a.approvals,
-    maxWh: Number(TRADE.maxWh),
+    maxWh: a.maxWh ?? Number(TRADE.maxWh),
     toleranceBps: SIM.toleranceBps,
     minSocBps: c.minSocBps,
   });
@@ -468,14 +510,14 @@ async function publishStatus() {
     escrow: chain.escrow,
     grid: S.grid,
     requests: { app: S.appRequest, wokwi: S.wokwiRequest },
-    active: a ? { id: a.id, source: a.source, openTx: a.openTx, approvals: a.approvals, stopping: a.stopping, status: a.status ?? null, sellerWh: FIVE_B ? a.finals?.seller?.wh ?? null : a.seller?.wh ?? null, buyerWh: FIVE_B ? a.finals?.buyer?.wh ?? null : a.buyer?.wh ?? null } : null,
+    active: a ? { id: a.id, source: a.source, openTx: a.openTx, approvals: a.approvals, stopping: a.stopping, status: a.status ?? null, targetWh: a.targetWh ?? null, maxWh: a.maxWh ?? null, liveSellerWh: a.liveSellerWh ?? null, liveBuyerWh: a.liveBuyerWh ?? null, sellerWh: FIVE_B ? a.finals?.seller?.wh ?? null : a.seller?.wh ?? null, buyerWh: FIVE_B ? a.finals?.buyer?.wh ?? null : a.buyer?.wh ?? null } : null,
     lastResult: S.lastResult,
     notice: S.notice ?? (FIVE_B && S.wokwiRequest && !S.appRequest && !a && Date.now() - S.lastTradeEnd > 3000 ? 'Buyer button pressed in Wokwi/Unity: in Stage 5B trades start only from the app (the firmware needs the escrow id)' : null),
     wokwiControl: Object.fromEntries(Object.entries(WOKWI_CONTROL).map(([k, v]) => [k, Boolean(v.topic)])),
     stage5b: { evidence: STAGE5B.evidence, settlementMode: STAGE5B.settlementMode, label: TESTNET ? LABEL_TESTNET : null, minSettleWh: STAGE5B.minSettleWh, targetW: STAGE5B.targetW, meterBFirmwareSeen: S.meterBSeen || null },
     controls: { tamper: tamperAvailable },
     trades: FIVE_B ? recent() : [],
-    params: { timeScale: SIM.timeScale, lineLoss: SIM.lineLoss, minSocPct: c.minSocBps / 100, toleranceBps: SIM.toleranceBps, maxWh: Number(TRADE.maxWh) },
+    params: { timeScale: SIM.timeScale, lineLoss: SIM.lineLoss, minSocPct: c.minSocBps / 100, toleranceBps: SIM.toleranceBps, maxWh: Number(TRADE.maxWh), maxOrderWh: Number(TRADE.maxWh), orderRate: ORDER_RATE },
   }, { retain: true });
 }
 

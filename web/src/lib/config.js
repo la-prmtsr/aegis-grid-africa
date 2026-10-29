@@ -43,9 +43,13 @@ export const IMPACT = {
 };
 
 // Mobile money layer. SIMULATED in this prototype: no MTN MoMo API is called and no real money moves.
-// USD amounts are derived from on-chain energy (Wh) with a fixed demo rate, not a market price or tariff.
+// Amounts in Ghana cedi are derived from on-chain energy (Wh) with a fixed demo price per kWh. Default
+// GH₵3.50/kWh: above the PURC non-residential grid tariff (GH₵1.84/kWh for 0–300 kWh from 1 July 2026), well
+// below a small diesel generator (diesel about GH₵19.30/L in October 2026 × IMPACT.dieselLPerKWh = about GH₵5.8/kWh).
 export const MOMO = {
-  usdPerKWh: Number(env.VITE_USD_PER_KWH || 0.2), // demo rate in US$ per kWh (assumption)
+  currency: 'GH₵',
+  pricePerKWh: Number(env.VITE_PRICE_PER_KWH || 3.5), // P2P demo price in GH₵ per kWh (assumption, see above)
+  dieselPerL: Number(env.VITE_DIESEL_PER_L || 19.3), // GH₵ per litre, for the "saved vs a generator" line
   tradeMaxWh: Number(env.VITE_TRADE_MAX_WH || 500), // must match TRADE_MAX_WH of the bridge (default 500)
   buyerPhone: env.VITE_BUYER_MOMO || '+233 24 ··· 1187',
   sellerPhone: env.VITE_SELLER_MOMO || '+233 55 ··· 0420',

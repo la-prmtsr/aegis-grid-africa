@@ -89,14 +89,14 @@ The console shows the planned **MoMo** payment layer, clearly labelled *Simulate
 
 | Step | What the user sees | What really happens |
 |---|---|---|
-| The buyer requests power | Deposit quote in USD, "Pay with MoMo", a phone approval screen, then "Confirming payment" | Nothing is charged. After "Approve", the console sends `requesting: true` and the bridge opens a real trade |
-| Live session | Cost so far in USD (and gwei) | Real meter telemetry |
-| Trade settles | Receipt: deposit, refund of the unused part to the buyer's MoMo | Real `TradeSettled` event; USD values are derived from it |
+| The buyer requests power | Order size in Wh (steps set by the backend, see docs/integration-v2.md Stage 6), deposit quote in Ghana cedi, "Pay with MoMo", a phone approval screen, then "Confirming payment" | Nothing is charged. After "Approve", the console sends `requesting: true` and the bridge opens a real trade |
+| Live session | Progress to the order, cost so far in cedi (and gwei); stops automatically at the order | Real meter telemetry |
+| Trade settles | Receipt: deposit, refund of the unused part to the buyer's MoMo, saving vs a diesel generator, and a Blockchain receipt with links to the openTrade and settleTrade transactions | Real `TradeSettled` event; cedi values are derived from it |
 | Seller | "Paid to your MoMo" per trade | Derived from the seller share in `TradeSettled` |
 | Dispute | Deposit "Held" | Real `TradeDisputed`, funds frozen in escrow |
 | Operator | Mobile money ledger: collected, paid out, refunded, held | All derived from on-chain trades |
 
-USD amounts use a fixed demo rate (`VITE_USD_PER_KWH`, default $0.20 per kWh), not a tariff or market price. On-chain balances and the Withdraw buttons appear when a wallet is connected.
+Cedi amounts use a fixed demo price (`VITE_PRICE_PER_KWH`, default GH₵3.50 per kWh): above the PURC non-residential grid tariff (GH₵1.84/kWh from 1 July 2026) and below a small diesel generator (about GH₵5.8/kWh at GH₵19.30 per litre and 0.3 L/kWh). It is an assumption, not a market price. On-chain balances and the Withdraw buttons appear when a wallet is connected.
 
 Production path (roadmap): a small server calls the MTN MoMo Open API, Collections (`requestToPay`) for the deposit and Disbursements (`transfer`) for payouts and refunds, with the platform funding the escrow from its float. Going live needs an MTN merchant account and the applicable payment regulations in Ghana.
 
