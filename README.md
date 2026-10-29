@@ -173,13 +173,6 @@ The dashboard uses 0.3 L/kWh and 2.68 kg CO2/L as **assumptions** until sources 
 - Staking or a decentralised oracle instead of a single arbiter
 - A pilot on one street, with the utility as a demand-response partner
 
-## Team
-
-| Name | Role |
-|---|---|
-| Alviola Permatasari | Smart contract, backend, verification |
-| Faras | Wokwi meter firmware, Unity digital twin |
-| _add name_ | Dashboard |
 
 ## License
 
