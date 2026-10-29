@@ -4,6 +4,29 @@ This replaces the v1 protocol (`docs/data-format.md`) for the live demo. Faras's
 
 Target flow: **Buyer Request in the app → backend → MQTT → Wokwi → telemetry (Unity follows it) → dual-meter verification → settlement on Base Sepolia.**
 
+## Stage 5B.3: two ESP32 meters in Wokwi (default)
+
+Faras's Stage 5B.2 firmware runs METER_A and METER_B as two ESP32 simulations. METER_A takes START/STOP commands in REMOTE mode, and both meters publish an **unsigned, simulated final event** when a trade ends. METER_B is derived from METER_A (`independentPhysicalMeasurement:false`), so these finals are telemetry evidence, not independent proof. The backend (`AEGIS_EVIDENCE=wokwi-final`, the default) works as follows:
+
+1. Subscribes to `meter/+/final` and the telemetry **before** it sends any command.
+2. Opens the escrow, then sends `demo/control/mode` (`WOKWI_MODE_REMOTE`, default `{"mode":"remote"}`) and `trade/cmd` `{"op":"start","tradeId":"<escrow id>","targetW":500}`. The tradeId is always the id from `TradeOpened`, never a typed `test-*` value. Only the app can start a trade; a buyer button pressed in Unity cannot create an escrow id.
+3. On "Stop" in the app (or grid restored): `trade/cmd` `{"op":"stop","tradeId":"<id>"}`.
+4. Stores every final event, command and status change in `bridge/data/evidence-<chainId>-<escrow>.jsonl` (server receipt time, topic, payload). Dedupe key: site, tradeId, meterId, role. Duplicates, replays (also after a restart), unknown or closed trades, wrong site/role/topic, `test-*` ids and invalid Wh are rejected and logged.
+5. Checks the pair: buyer Wh > 0 and ≤ seller Wh, gap ≤ 3% on the **original fractional Wh**. In testnet mode also: seller ≥ `MIN_SETTLEMENT_WH` (5), then the same checks again on the **whole Wh (uint64, rounded down) that would be sent to the contract**, plus the trade maximum and the 5% battery reserve. Values are never adjusted. If any check fails, nothing is sent on-chain.
+
+| `SETTLEMENT_MODE` | Result of a passing trade | On-chain |
+|---|---|---|
+| `off` (default) | `SIMULATION_VERIFIED` | nothing after `openTrade`; the deposit is refundable after expiry |
+| `testnet` | each gateway signs its own meter's final (EIP-712, its own registered key), the relayer checks both against the verified whole Wh, then `settleTrade` | Base Sepolia test funds, labelled **`SIMULATED_TESTNET_SETTLEMENT`** in the backend, the receipt and the dashboard |
+
+Trade statuses: `PENDING` → `ACTIVE` → `STOPPED` → `AWAITING_EVIDENCE` → `SIMULATION_VERIFIED` or `REJECTED`; in testnet mode `SIGNING` → `SETTLED` / `DISPUTED` / `FAILED`. They are published on `backend/status` and in a read-only API on the backend machine: `http://127.0.0.1:8790/health`, `/trades`, `/trades/<id>` (GET only).
+
+**Trust model (what the contract checks).** `settleTrade` accepts a reading only if it is signed by the meter address the seller's account and the buyer's account each registered with `registerMeter`; one address cannot serve both accounts. The contract cannot tell whether that key sits in a meter or in a gateway, and it cannot prove that the two measurements are independent. In this prototype each key is held by a separate gateway process that attests the Wokwi final of its own meter. No contract change is needed and no signature check is bypassed; the simulation is stated in every label instead.
+
+**Energy per trade.** The 5B.2 firmware counts in real time: at `targetW=500` the 5 Wh minimum takes about 36 s (Faras's `test-003` at about 100 W gave 2.47 Wh). Whole Wh are coarse for small trades: 33.9 vs 32.95 Wh passes on fractions (2.8%) but 33 vs 32 fails as uint64 (3.03%), and the backend then does not submit.
+
+**Tamper** is a switch in Wokwi METER_B; the dashboard tile is disabled with the real firmware (it works with the mock). A tampered trade fails the fractional check and is `REJECTED` before anything is sent on-chain.
+
 ## Who owns what
 
 | Part | Owner | Code |
@@ -41,27 +64,31 @@ All topics start with `aegis-grid/ag-sakarya26/`.
 | Topic | Publisher → subscribers | Notes |
 |---|---|---|
 | `demo/telemetry` | Wokwi → Unity, Meter A gateway | Stage 4E JSON, unchanged |
-| `demo/control/<name>` | relayer → Wokwi | format to be confirmed by Faras (see "Open items") |
+| `demo/control/<name>` | relayer → Wokwi | `mode` (REMOTE) is used; outage/backup/PV/load formats still to be confirmed (see "Open items") |
+| `trade/cmd` | relayer → METER_A firmware | Stage 5B: `{"op":"start","tradeId":"<escrow id>","targetW":W}`, `{"op":"stop","tradeId":"<id>"}` |
+| `meter/METER_A/final`, `meter/METER_B/final` | firmware → relayer, gateways | Stage 5B: unsigned simulated finals, QoS 0, not retained |
 | `meter/METER_A/telemetry` | gateway → Meter B, relayer, dashboard | normalised, 1 per Wokwi message, QoS 1 |
-| `meter/METER_B/telemetry` | Meter B → dashboard | |
+| `meter/METER_B/telemetry` | Meter B → dashboard; also METER_B firmware | the dashboard uses only `"v":2` messages (the backend's view) |
 | `grid` | gateway → dashboard | retained, on change and every 10 s |
-| `meter/METER_A/cmd`, `meter/METER_B/cmd` | relayer → meters | `start` (tradeId, maxWh), `stop` (tradeId, untilSeq) |
+| `meter/METER_A/cmd`, `meter/METER_B/cmd` | relayer → gateways | `start` / `stop` (gateway evidence), `sign` (Stage 5B, testnet only) |
 | `trade/<id>/reading/seller` and `/buyer` | meters → relayer, dashboard | signed final readings, retained |
 | `backend/status` | relayer → dashboard | retained: active trade, approvals, last result, notices |
 | `app/request` | dashboard → relayer | `{ "requesting": true \| false }` |
 | `app/demo` | dashboard → relayer, Meter B, mock | `outage`, `backup`, `tamper`, `pvW`, `communityLoadW`, `engine` (mock only) |
 
-## How the energy is counted
+## How the energy is counted (`AEGIS_EVIDENCE=gateway`, older Stage 4E firmware)
 
 - **Meter A gateway** reads each Stage 4E message, checks it with Faras's rules and computes the buyer-first allocation with Faras's `allocate()`. During an outage the P2P flow to the shop is `buyerSuppliedW`; with the grid on, the shop is grid-fed and nothing is counted.
 - Both meters integrate with the **same rule**: energy of interval (k−1, k] = power in message k−1 × simulated duration. An interval longer than 5 s counts as zero on both sides (no invented energy across a gap).
 - **Meter B** applies the line loss (2%, `AEGIS_LINE_LOSS`) and has its own tamper switch (reports 60%). Its physical input in the simulation is the Wokwi power flow relayed by Meter A, which stands in for the cable. In production Meter B would have its own current sensor.
 - **Order:** the relayer starts Meter B before Meter A, and stops Meter B at the exact sequence number of Meter A's last counted message, so both meters close on the same window.
-- Each meter signs its own final reading (EIP-712, same struct as the contract) with the chain time minus 5 s.
+- Each meter signs its own final reading (EIP-712, same struct as the contract) with the chain time minus 5 s. Whole Wh are rounded down; if the exact readings agree but the whole Wh do not, the trade is held instead of being frozen as a false dispute.
 
 ## Verification and settlement
 
 The relayer checks, before spending gas: both-party approval (the buyer's request and deposit; the seller's meter registered on-chain plus `SELLER_CONSENT`), both signatures recover to the meters registered for this trade, readings are for the same trade, energy is above zero and within the trade maximum, the seller's battery is at or above the contract reserve, the telemetry during the trade broke none of Faras's rules (PCC isolation, demand consistency, reserve), and Meter B saw the end of the trade.
+
+This section describes the gateway evidence path. `SETTLEMENT_MODE=off` applies here too: verified trades are not submitted.
 
 - All checks pass and readings agree within 3%: `settleTrade` pays for what the buyer received.
 - All checks pass but readings disagree: `settleTrade` is still sent, and the contract **freezes** the deposit as *Disputed*. This differs on purpose from "hold settlement": a trade that is never submitted expires and the buyer gets a full refund, which would reward a buyer who tampers with their meter.
@@ -89,7 +116,7 @@ One-time setup (Ola's laptop, WSL):
 
 ```bash
 cd ~/aegis-grid-africa && git pull
-cd bridge && npm install && npm test          # 21 tests: Faras's 6 + 15 for v2
+cd bridge && npm install && npm test          # 31 tests: Faras's 6 + 16 for v2 + 9 for Stage 5B evidence
 cd ../contracts && forge test                  # 26 tests
 ```
 
@@ -108,7 +135,8 @@ Run:
 | Command (in `bridge/`) | When |
 |---|---|
 | `npm run v2` | Faras's Wokwi is running and bridged to the public broker |
-| `npm run v2:mock` | Wokwi is off: a mock with the same Stage 4E fields (never run both) |
+| `npm run v2:mock` | Wokwi is off: a mock with the same Stage 4E fields and the Stage 5B.2 trade commands and finals (never run both) |
+| `SETTLEMENT_MODE=testnet npm run v2` | recording the testnet demo (otherwise leave `off`) |
 | `npm run v2:monitor` | Meters only, no blockchain: check that telemetry reaches the dashboard |
 | `npm run adapter` | Faras's original read-only adapter (prints normalised telemetry) |
 
@@ -116,15 +144,19 @@ Dashboard: `web/.env` needs `VITE_SITE=ag-sakarya26`, `VITE_ESCROW_ADDRESS` = th
 
 ## What Faras needs to do
 
-1. Add `docs/mosquitto-aegis-bridge.conf` to the end of his `mosquitto.conf` and restart Mosquitto. Wokwi and Unity are not touched. Tested with Mosquitto 2.0.18: telemetry goes out once (no loops), control comes in, Unity's local controls stay local.
-2. Send the control format (open item 1).
+1. Replace the Aegis block at the end of his `mosquitto.conf` with the current `docs/mosquitto-aegis-bridge.conf` (it now also forwards `meter/+/final` out and `trade/cmd` in) and restart Mosquitto. Wokwi and Unity are not touched.
+2. Confirm the exact REMOTE-mode payload on `demo/control/mode` (the backend sends `{"mode":"remote"}`; change `WOKWI_MODE_REMOTE` if it differs), and send the outage/backup/PV/load control formats (open item 1).
 3. Add the Stage 4E firmware (`sketch.ino`, `diagram.json`, `wokwi.toml`) to the repository, for example under `firmware/wokwi-stage4e/`, and share the Wokwi project link for the README. Judges need both.
 
 ## Open items
 
-1. **Wokwi control format.** The exact sub-topics and JSON under `demo/control/` for buyer request, outage and emergency backup are not known yet. Until they are set in `.env` (`WOKWI_CTRL_BUYER_TOPIC`, `WOKWI_CTRL_BUYER_ON`, `WOKWI_CTRL_BUYER_OFF`, same for `OUTAGE` and `BACKUP`), the relayer only logs what it would send, and the buyer request must be pressed in Wokwi or Unity (the backend then opens the trade by itself). The PV and local-load sliders of the dashboard Control room use `WOKWI_CTRL_PV_TOPIC` / `WOKWI_CTRL_PV_VALUE` and `WOKWI_CTRL_LOAD_TOPIC` / `WOKWI_CTRL_LOAD_VALUE`, where `{value}` in the payload is replaced by the watts (for example `{"pv_power_w":{value}}`). While a control is not configured, its slider is disabled when Wokwi live is the source. The mock uses a provisional format only for development.
+1. **Wokwi control format.** Stage 5B: the buyer request is now `trade/cmd` START/STOP (known format); the REMOTE-mode payload needs Faras's confirmation. The exact sub-topics and JSON under `demo/control/` for buyer request, outage and emergency backup are not known yet. Until they are set in `.env` (`WOKWI_CTRL_BUYER_TOPIC`, `WOKWI_CTRL_BUYER_ON`, `WOKWI_CTRL_BUYER_OFF`, same for `OUTAGE` and `BACKUP`), the relayer only logs what it would send, and the buyer request must be pressed in Wokwi or Unity (the backend then opens the trade by itself). The PV and local-load sliders of the dashboard Control room use `WOKWI_CTRL_PV_TOPIC` / `WOKWI_CTRL_PV_VALUE` and `WOKWI_CTRL_LOAD_TOPIC` / `WOKWI_CTRL_LOAD_VALUE`, where `{value}` in the payload is replaced by the watts (for example `{"pv_power_w":{value}}`). While a control is not configured, its slider is disabled when Wokwi live is the source. The mock uses a provisional format only for development.
 2. **Time scale** of the Stage 4E firmware (see above).
 3. Seller consent is a standing permission (meter registered on-chain plus `SELLER_CONSENT=true`), not a per-trade click.
+
+## Tested (29 October 2026, Stage 5B.3, local chain and two local Mosquitto brokers)
+
+A local broker in Faras's role (mock firmware, bridged with the current `mosquitto-aegis-bridge.conf`) and a local "public" broker for the backend and dashboard. `off`: 5.566 vs 5.455 Wh (2.00%) → `SIMULATION_VERIFIED`, no settlement. `testnet`: 5.562 vs 5.451 Wh → whole 5 vs 5 → both gateways signed → `SETTLED` on-chain, labelled `SIMULATED_TESTNET_SETTLEMENT`. Tampered METER_B (41.2% gap) → `REJECTED`, nothing sent. 2.09 Wh trade → `REJECTED` (below 5 Wh). A replayed final and a `test-003` final → rejected. Records survived a backend restart. In a headless browser: buyer request, receipt "Simulation verified" (off) and "Settled · paid" with the testnet label, Oracle statuses. Not yet run against Faras's real Wokwi and Base Sepolia.
 
 ## Tested (28 October 2026, local chain and local Mosquitto)
 

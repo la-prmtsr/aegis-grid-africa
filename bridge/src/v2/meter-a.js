@@ -2,10 +2,11 @@
 // Wokwi or Unity, republishes it for the dashboard, counts the energy exported to the buyer per trade,
 // and signs the seller's final reading with SELLER_METER_PRIVATE_KEY only.
 import { ethers } from 'ethers';
-import { SITE, SIM, topics, chain } from './config.js';
+import { SITE, SIM, STAGE5B, topics, chain } from './config.js';
 import { connect, logger } from './mqtt.js';
 import { MeterAGateway } from './meters.js';
 import { domainFor, signReading, chainTimestamp } from './signing.js';
+import { createFinalSigner } from './final-signer.js';
 
 const log = logger('meter-A');
 const gw = new MeterAGateway({ site: SITE, sim: SIM });
@@ -26,10 +27,13 @@ let lastGridSent = 0;
 let lastReject = 0;
 let lastScaleLog = 0;
 
-const { publish } = connect('meter-a', [topics.wokwiTelemetry, topics.cmd('METER_A')], async (topic, msg) => {
+const { publish } = connect('meter-a', [topics.wokwiTelemetry, topics.cmd('METER_A'), topics.final('METER_A')], async (topic, msg) => {
   if (topic === topics.wokwiTelemetry) return onWokwi(msg);
-  if (topic === topics.cmd('METER_A')) return onCmd(msg);
+  if (topic === topics.final('METER_A')) return finals.onFinal(msg);
+  if (topic === topics.cmd('METER_A')) return msg.cmd === 'sign' ? finals.onSignRequest(msg) : onCmd(msg);
 }, log);
+// Stage 5B.3: signs METER_A's own final event, only on a testnet settlement request
+const finals = createFinalSigner({ meterId: 'METER_A', getSigner, publish: (...a) => publish(...a), log });
 
 async function onWokwi(raw) {
   let out;
@@ -78,4 +82,4 @@ async function publishFinal(final) {
   log(`trade ${final.tradeId} final: ${final.wh} Wh sent, battery ${(final.socBpsAfter / 100).toFixed(2)}% (${final.reason})${final.issues.length ? ` FLAGGED: ${final.issues.join('; ')}` : ''}`);
 }
 
-log(`listening to ${topics.wokwiTelemetry} (read only)`);
+log(`listening to ${topics.wokwiTelemetry} (read only); evidence ${STAGE5B.evidence}, settlement ${STAGE5B.settlementMode}`);

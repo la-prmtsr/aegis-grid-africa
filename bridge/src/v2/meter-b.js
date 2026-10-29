@@ -2,10 +2,11 @@
 // Its physical input in this simulation is the power flow from the Wokwi model as relayed by Meter A
 // (the stand-in for the cable); it applies the line loss, keeps its own count and has its own tamper switch.
 import { ethers } from 'ethers';
-import { SIM, topics, chain } from './config.js';
+import { SIM, STAGE5B, topics, chain } from './config.js';
 import { connect, logger } from './mqtt.js';
 import { MeterBSim } from './meters.js';
 import { domainFor, signReading, chainTimestamp } from './signing.js';
+import { createFinalSigner } from './final-signer.js';
 
 const log = logger('meter-B');
 const meter = new MeterBSim({ sim: SIM });
@@ -22,7 +23,9 @@ async function getSigner() {
   return signer;
 }
 
-const { publish } = connect('meter-b', [topics.telemetry('METER_A'), topics.cmd('METER_B'), topics.appDemo], async (topic, msg) => {
+const { publish } = connect('meter-b', [topics.telemetry('METER_A'), topics.cmd('METER_B'), topics.appDemo, topics.final('METER_B')], async (topic, msg) => {
+  if (topic === topics.final('METER_B')) return finals.onFinal(msg);
+  if (topic === topics.cmd('METER_B') && msg.cmd === 'sign') return finals.onSignRequest(msg);
   if (topic === topics.telemetry('METER_A')) {
     const { telemetry, final } = meter.onSellerTelemetry(msg);
     if (telemetry) await publish(topics.telemetry('METER_B'), telemetry);
@@ -63,4 +66,6 @@ async function publishFinal(final) {
   log(`trade ${final.tradeId} final: ${final.wh} Wh received${final.tamper ? ' (TAMPERED)' : ''}${final.incomplete ? ' (incomplete)' : ''}`);
 }
 
-log(`line loss ${SIM.lineLoss * 100}%, waiting for Meter A`);
+// Stage 5B.3: signs METER_B's own final event, only on a testnet settlement request
+const finals = createFinalSigner({ meterId: 'METER_B', getSigner, publish: (...a) => publish(...a), log });
+log(`line loss ${SIM.lineLoss * 100}%, waiting for Meter A; evidence ${STAGE5B.evidence}, settlement ${STAGE5B.settlementMode}`);

@@ -8,6 +8,11 @@
 // emergency_backup_allowed, pv_power_w or local_load_w) and the dashboard's app/demo topic
 // (pvW, shopLoadW, communityLoadW, outage, backup, engine). engine "wokwi" pauses the mock so the real
 // Wokwi is the only source; engine "mock" resumes it. Its messages carry "sim_source":"MOCK".
+//
+// Stage 5B.2 emulation (Faras's two-ESP32 firmware): demo/control/mode {"mode":"remote"}, then trade/cmd
+// {"op":"start","tradeId":"<id>","targetW":W} / {"op":"stop","tradeId":"<id>"}. On stop (or at the battery
+// reserve) it publishes the UNSIGNED final events on meter/METER_A/final and meter/METER_B/final, counted in
+// real time like the firmware. METER_B is derived from METER_A (2% loss), exactly as in Faras's setup.
 import { SITE, SIM, topics } from './config.js';
 import { connect, logger } from './mqtt.js';
 
@@ -19,9 +24,23 @@ const r1 = (x) => Math.round(x * 10) / 10;
 
 const inp = { pvW: 900, communityLoadW: 300, shopLoadW: 250, outage: false, buyerRequest: false, backup: false };
 let paused = false; // true while the dashboard has switched the source to the real Wokwi
+let mode = 'local'; // Stage 5B.2: METER_A accepts trade commands only in REMOTE mode
+let trade = null; // { tradeId, targetW, sellerWh, buyerWh }
+let tamper = false; // METER_B tamper switch (in the firmware this is set in Wokwi)
 let batteryWh = CAP_WH * 0.5;
 
-const { publish } = connect('mock-wokwi', [`${topics.wokwiControl('#')}`, topics.appDemo], (topic, msg) => {
+const { publish } = connect('mock-wokwi', [`${topics.wokwiControl('#')}`, topics.appDemo, topics.tradeCmd], (topic, msg) => {
+  if (topic === topics.tradeCmd) return onTradeCmd(msg);
+  if (topic === topics.wokwiControl('mode')) {
+    const next = msg?.mode === 'remote' ? 'remote' : msg?.mode === 'local' ? 'local' : null;
+    if (next && next !== mode) log(`METER_A mode -> ${next.toUpperCase()}`);
+    if (next) mode = next;
+    return undefined;
+  }
+  if (topic === topics.appDemo && typeof msg.tamper === 'boolean') {
+    if (tamper !== msg.tamper) log(`METER_B tamper ${msg.tamper ? 'ON (reports 60%)' : 'off'}`);
+    tamper = msg.tamper;
+  }
   const patch = {};
   if ('buyer_request' in msg) patch.buyerRequest = Boolean(msg.buyer_request);
   if ('grid_status' in msg) patch.outage = msg.grid_status === 'OUTAGE';
@@ -43,6 +62,35 @@ const { publish } = connect('mock-wokwi', [`${topics.wokwiControl('#')}`, topics
   if (Object.keys(patch).length) set(patch, topic.endsWith('/app/demo') ? 'app' : 'control');
 }, log);
 
+function onTradeCmd(cmd) {
+  if (cmd?.op === 'start') {
+    const id = cmd.tradeId;
+    if (mode !== 'remote') return log(`START ignored: METER_A is in ${mode.toUpperCase()} mode`);
+    if (typeof id !== 'string' || id.length < 1 || id.length > 64) return log('START ignored: tradeId must be a 1-64 character string');
+    if (!(cmd.targetW > 0 && cmd.targetW <= 500)) return log('START ignored: targetW must be in (0, 500] W');
+    if (trade) return log(`START ignored: trade ${trade.tradeId} is still active (one trade at a time)`);
+    trade = { tradeId: id, targetW: cmd.targetW, sellerWh: 0, buyerWh: 0 };
+    set({ buyerRequest: true, shopLoadW: cmd.targetW }, 'trade/cmd');
+    return log(`trade ${id} STARTED at ${cmd.targetW} W`);
+  }
+  if (cmd?.op === 'stop') {
+    if (!trade || cmd.tradeId !== trade.tradeId) return log(`STOP ignored: ${cmd.tradeId} is not the active trade`);
+    return finishTrade('stop_cmd');
+  }
+  return undefined;
+}
+
+function finishTrade(reason) {
+  const t = trade;
+  trade = null;
+  set({ buyerRequest: false }, 'trade end');
+  const socBpsAfter = Math.round((10000 * batteryWh) / CAP_WH);
+  // Final events exactly like Faras's firmware: unsigned, simulated, not settlement-eligible. QoS 0, not retained.
+  publish(topics.final('METER_A'), { v: 1, site: SITE, meterId: 'METER_A', role: 'seller', tradeId: t.tradeId, wh: Math.round(t.sellerWh * 1e6) / 1e6, socBpsAfter, reason, simulated: true, settlementEligible: false, signature: null }, { qos: 0 });
+  publish(topics.final('METER_B'), { v: 1, site: SITE, meterId: 'METER_B', role: 'buyer', tradeId: t.tradeId, wh: Math.round(t.buyerWh * 1e6) / 1e6, tamper, reason: 'meter_a_stopped', simulated: true, independentPhysicalMeasurement: false, settlementEligible: false, signature: null }, { qos: 0 });
+  log(`trade ${t.tradeId} ${reason}: METER_A ${t.sellerWh.toFixed(3)} Wh, METER_B ${t.buyerWh.toFixed(3)} Wh${tamper ? ' (tampered)' : ''}`);
+}
+
 function set(patch, source) {
   Object.assign(inp, patch);
   log(`[${source}] ${JSON.stringify(inp)}`);
@@ -51,7 +99,8 @@ function set(patch, source) {
 let last = Date.now();
 function step() {
   const now = Date.now();
-  const dtH = ((now - last) / 3_600_000) * SIM.timeScale;
+  const realH = (now - last) / 3_600_000; // the 5B.2 firmware counts trade energy in real time
+  const dtH = realH * SIM.timeScale;
   last = now;
   if (paused) return; // the real Wokwi is the source; the battery model is frozen meanwhile
 
@@ -75,6 +124,15 @@ function step() {
     const toCommunity = inp.backup ? Math.min(inp.communityLoadW, budget) : 0;
     discharge = toBuyer + toCommunity;
     unserved = demand - discharge;
+  }
+  if (trade) {
+    const toBuyer = inp.outage ? Math.min(buyerDemand, discharge) : 0;
+    trade.sellerWh += toBuyer * realH;
+    const got = toBuyer * (1 - SIM.lineLoss) * realH;
+    trade.buyerWh += tamper ? got * SIM.tamperFactor : got;
+    if (inp.outage && trade.sellerWh > 0 && toBuyer < 1 && batteryWh <= minWh + 0.01) setImmediate(() => trade && finishTrade('soc_floor'));
+    // METER_B firmware telemetry (v1): the dashboard ignores it, the backend only notes that METER_B is alive
+    publish(topics.telemetry('METER_B'), { v: 1, site: SITE, meterId: 'METER_B', role: 'buyer', tradeId: trade.tradeId, importW: r1(toBuyer * (1 - SIM.lineLoss)), tradeWh: Math.round(trade.buyerWh * 1000) / 1000, simulated: true }, { qos: 0 });
   }
   batteryWh += (charge * EFF - discharge / EFF) * dtH;
   batteryWh = Math.min(CAP_WH, Math.max(minWh, batteryWh));

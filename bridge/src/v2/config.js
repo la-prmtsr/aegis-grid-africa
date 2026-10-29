@@ -39,6 +39,10 @@ export const topics = {
   reading: (tradeId, role) => `${ROOT}/trade/${tradeId}/reading/${role}`,
   readingAll: `${ROOT}/trade/+/reading/+`,
   backendStatus: `${ROOT}/backend/status`,
+  // Faras's Stage 5B.2 firmware (two ESP32 in Wokwi): REMOTE mode, trade commands, unsigned final events.
+  final: (meterId) => `${ROOT}/meter/${meterId}/final`,
+  finalAll: `${ROOT}/meter/+/final`,
+  tradeCmd: `${ROOT}/trade/cmd`,
   // The app (dashboard) talks to the backend here.
   appRequest: `${ROOT}/app/request`,
   appDemo: `${ROOT}/app/demo`,
@@ -57,6 +61,29 @@ export const SIM = {
 };
 if (SIM.lineLoss < 0 || SIM.lineLoss >= 1) throw new Error('AEGIS_LINE_LOSS must be between 0 and 1');
 if (SIM.timeScale <= 0) throw new Error('AEGIS_TIME_SCALE must be positive');
+
+// Stage 5B.3: where the trade evidence comes from, and whether the backend may settle on-chain.
+const pick = (name, allowed, fallback) => {
+  const v = (env[name] || fallback).trim().toLowerCase();
+  if (!allowed.includes(v)) throw new Error(`${name} must be one of: ${allowed.join(', ')}`);
+  return v;
+};
+export const STAGE5B = {
+  // wokwi-final: Faras's METER_A/METER_B final events (Stage 5B.2). gateway: the v2 gateways count the
+  // energy themselves from Stage 4E telemetry (firmware without trade commands).
+  evidence: pick('AEGIS_EVIDENCE', ['wokwi-final', 'gateway'], 'wokwi-final'),
+  // off (default): verify only, never send settleTrade. testnet: Base Sepolia demo with test funds,
+  // labelled SIMULATED_TESTNET_SETTLEMENT.
+  settlementMode: pick('SETTLEMENT_MODE', ['off', 'testnet'], 'off'),
+  minSettleWh: num('MIN_SETTLEMENT_WH', 5), // testnet only: below this the whole-Wh rounding hides the gap
+  targetW: num('TRADE_TARGET_W', 500), // firmware accepts (0, 500] W
+  finalTimeoutS: num('FINAL_TIMEOUT_S', 30), // how long to wait for both finals after STOP
+  modeTopic: env.WOKWI_MODE_TOPIC || 'mode', // relative to demo/control/
+  modeRemote: env.WOKWI_MODE_REMOTE || '{"mode":"remote"}', // payload that puts METER_A in REMOTE mode
+  statusPort: num('STATUS_API_PORT', 8790), // read-only trade status API on 127.0.0.1
+  evidenceDir: env.EVIDENCE_DIR || path.join(here, '..', '..', 'data'),
+};
+if (!(STAGE5B.targetW > 0 && STAGE5B.targetW <= 500)) throw new Error('TRADE_TARGET_W must be in (0, 500]');
 
 export const TRADE = {
   pricePerWh: BigInt(env.PRICE_WEI_PER_WH || '1000000000'), // 1 gwei per Wh (demo price)

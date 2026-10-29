@@ -48,7 +48,7 @@ export class MeterAGateway {
       tradeId: tr.id,
       role: 'seller',
       meterId: 'METER_A',
-      wh: Math.round(Math.min(tr.wh, tr.maxWh)),
+      wh: Math.floor(Math.min(tr.wh, tr.maxWh)), // whole Wh for the contract (uint64), never rounded up
       whExact: tr.wh,
       socBpsAfter: this.last ? Math.round(this.last.socPct * 100) : null,
       lastSeq: this.seq,
@@ -242,7 +242,7 @@ export class MeterBSim {
       tradeId: tr.id,
       role: 'buyer',
       meterId: 'METER_B',
-      wh: Math.round(Math.min(tr.reportedWh, tr.maxWh)),
+      wh: Math.floor(Math.min(tr.reportedWh, tr.maxWh)), // whole Wh for the contract (uint64), never rounded up
       whExact: tr.reportedWh,
       arrivedWhExact: tr.arrivedWh,
       tamper: this.tamper,
@@ -327,6 +327,12 @@ export function settlementDecision({ seller, buyer, sellerSigOk, buyerSigOk, app
   if (seller.issues?.length) return hold(`Telemetry rule violated during the trade: ${seller.issues.join('; ')}`);
   if (buyer.incomplete) return hold('Buyer meter missed the end of the trade');
   const agree = buyer.wh <= seller.wh && (seller.wh - buyer.wh) * 10000 <= seller.wh * toleranceBps;
+  // Two-stage rule (Stage 5B.3): if the exact readings agree but the whole Wh do not, the gap is a rounding
+  // artefact. Do not submit: the contract would freeze an honest trade as Disputed.
+  if (!agree && Number.isFinite(seller.whExact) && Number.isFinite(buyer.whExact)) {
+    const exactAgree = buyer.whExact <= seller.whExact && (seller.whExact - buyer.whExact) * 10000 <= seller.whExact * toleranceBps;
+    if (exactAgree) return hold(`Exact readings agree but whole Wh do not (${seller.wh} vs ${buyer.wh}): trade too small to settle`);
+  }
   return agree
     ? { action: 'submit', expected: 'SETTLED', reason: 'Readings agree within tolerance' }
     : { action: 'submit', expected: 'DISPUTED', reason: 'Readings disagree: the contract will freeze the deposit' };

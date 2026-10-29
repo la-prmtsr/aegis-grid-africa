@@ -785,3 +785,4 @@ tr.rc-link:hover td{background:#F6F8FA}
 @container (max-width:420px){ .rc-meters{grid-template-columns:minmax(0,1fr)} .rc-arrow{transform:rotate(90deg);padding:4px 0} .rc-arrow small{transform:rotate(-90deg)} .rc-rows{grid-template-columns:minmax(0,1fr)} .rc-m b{font-size:28px} }
 @media (max-width:560px){ .rc-d-body{padding:14px 14px 24px} td.rc-go{display:none} }
 .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+.rc-pills{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
