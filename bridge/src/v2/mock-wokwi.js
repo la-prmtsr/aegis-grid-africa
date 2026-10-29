@@ -111,7 +111,7 @@ function step() {
   const buyerDemand = inp.buyerRequest ? inp.shopLoadW : 0;
   const demand = inp.communityLoadW + buyerDemand;
   const minWh = (SIM.minSocPct / 100) * CAP_WH;
-  let charge = 0, discharge = 0, pvDelivered = 0, gridImport = 0, unserved = 0;
+  let charge = 0, discharge = 0, pvDelivered = 0, gridImport = 0, unserved = 0, buyerW = 0;
 
   if (!inp.outage) {
     const surplus = Math.max(0, inp.pvW - demand);
@@ -128,6 +128,7 @@ function step() {
     const toCommunity = inp.backup ? Math.min(inp.communityLoadW, budget) : 0;
     discharge = toBuyer + toCommunity;
     unserved = demand - discharge;
+    buyerW = toBuyer;
   }
   if (trade) {
     const toBuyer = inp.outage ? Math.min(buyerDemand, discharge) : 0;
@@ -138,7 +139,10 @@ function step() {
     // METER_B firmware telemetry (v1): the dashboard ignores it, the backend only notes that METER_B is alive
     publish(topics.telemetry('METER_B'), { v: 1, site: SITE, meterId: 'METER_B', role: 'buyer', tradeId: trade.tradeId, importW: r1(toBuyer * (1 - SIM.lineLoss)), tradeWh: Math.round(trade.buyerWh * 1000) / 1000, simulated: true }, { qos: 0 });
   }
-  batteryWh += (charge * EFF - discharge / EFF) * dtH;
+  // During a trade the energy to the buyer leaves the battery at the trade counter's speed (FIRMWARE_ENERGY_SCALE),
+  // so the battery level and the billed Wh agree; everything else follows the 60x battery model.
+  const buyerH = trade ? realH * STAGE5B.energyScale : dtH;
+  batteryWh += charge * EFF * dtH - ((discharge - buyerW) * dtH + buyerW * buyerH) / EFF;
   batteryWh = Math.min(CAP_WH, Math.max(minWh, batteryWh));
   const soc = (100 * batteryWh) / CAP_WH;
 
