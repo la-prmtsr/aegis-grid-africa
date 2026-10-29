@@ -80,3 +80,17 @@ If any mismatch refunded the buyer automatically, a buyer could tamper with its 
 | `withdraw` | 32,415 | 194,490,000,104 |
 
 Fees are testnet amounts at a gas price of about 0.006 gwei, including the Layer-1 data fee. A dollar figure on mainnet depends on that day's gas price and ETH price, so we report gas units and testnet fees only. The second settlement uses less gas than the first because the recipients' balance slots were already non-zero.
+
+## Stage 5B.3: live Wokwi trades on contract v2 (29 October 2026)
+
+Faras's two ESP32 simulations in Wokwi (METER_A seller, METER_B buyer derived from METER_A) on his laptop, bridged to the public broker; the backend on Ola's laptop; contract v2 [`0x2736…fc6e`](https://base-sepolia.blockscout.com/address/0x273651238fe3e2279d2295edcbd005f31347fc6e). Every trade was opened on-chain from the dashboard, and the firmware received START/STOP with the escrow trade id. Final readings are unsigned simulated events; see `docs/integration-v2.md`, "Stage 5B.3".
+
+| Trade | Mode | METER_A | METER_B | Check | Result |
+|---|---|---|---|---|---|
+| 2 | off | 10.278 Wh | 23.026 Wh | buyer > seller | **Rejected** before any settlement (METER_B counted with its own clock; fixed in the firmware) |
+| 4 | off | 17.083 Wh | 16.742 Wh | 2.0% | **Simulation verified**, nothing sent on-chain |
+| 5 | off | 4.028 Wh | 3.947 Wh | 2.0% | **Simulation verified** |
+| 6 | testnet | 9.444 Wh | 9.256 Wh | 2.0%; whole Wh 9 / 9 | Both gateways signed (seller `0x26eA…9263`, buyer `0xc37d…D4C7`) → **Settled** on-chain, labelled `SIMULATED_TESTNET_SETTLEMENT` · [settle tx](https://base-sepolia.blockscout.com/tx/0xa354a8bfe7cec59ffd5460a00617f5c2ce25cba7ed5a1770de82af3a2d9a6404) |
+
+Transparency: the contract verifies that each reading is signed by the meter key the seller's and the buyer's account registered. In this prototype those keys are held by two separate gateway processes that attest the Wokwi final of their own meter; METER_B is derived from METER_A, so the readings are not independent measurements. Trade 6 is a testnet demonstration with test funds, not evidence of a real energy delivery.
+

@@ -62,6 +62,7 @@ flowchart LR
 
 | What | Result |
 |---|---|
+| **Live Wokwi trade, two ESP32 meters (Stage 5B, contract v2)** | METER_A 9.444 Wh, METER_B 9.256 Wh (2.0%) → whole Wh 9 / 9 → both gateways signed → **settled**, labelled `SIMULATED_TESTNET_SETTLEMENT` · [tx](https://base-sepolia.blockscout.com/tx/0xa354a8bfe7cec59ffd5460a00617f5c2ce25cba7ed5a1770de82af3a2d9a6404) |
 | Honest trade (Wokwi Stage 4E model, contract v2) | 238 Wh sent, 233 Wh received (2.1%) → **settled** · [tx](https://base-sepolia.blockscout.com/tx/0xcf67f87b80471e80f406eb1b8d00d6773da470d4e20a2094ecee160d9efb8138) |
 | Tampered buyer meter (contract v1) | 138 vs 81 Wh → **disputed, funds frozen** · [details](docs/evidence.md) |
 | Seller payout | `withdraw()` paid out; a second attempt reverted · [details](docs/evidence.md) |
