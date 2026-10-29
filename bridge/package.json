@@ -7,6 +7,7 @@
   "scripts": {
     "v2": "node src/v2/run.js",
     "v2:mock": "node src/v2/run.js --mock",
+    "v2:testnet": "SETTLEMENT_MODE=testnet node src/v2/run.js",
     "v2:monitor": "node src/v2/run.js --monitor",
     "v2:setup": "node src/v2/setup.js",
     "v2:meter-a": "node src/v2/meter-a.js",

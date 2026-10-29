@@ -20,3 +20,6 @@ firmware/test/build/
 .DS_Store
 Thumbs.db
 web/dist/
+
+# Stage 5B.3 evidence store (local JSONL, may contain trade data)
+bridge/data/

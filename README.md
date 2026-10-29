@@ -24,7 +24,7 @@ Tech Hub Africa Hackathon 2026
 | 🧾 On-chain evidence | [docs/evidence.md](docs/evidence.md) |
 
 > [!NOTE]
-> A working prototype on a public testnet. The meters are simulated (Wokwi ESP32 and a software meter); the escrow, the signatures and the payments are real testnet transactions. See [What is real](#what-is-real-and-what-is-simulated).
+> A working prototype on a public testnet. The two meters are simulated ESP32s in Wokwi, and the buyer meter is derived from the seller meter. The escrow and its signature checks are real contracts on Base Sepolia; settlements of simulated trades run only in labelled testnet demos (`SIMULATED_TESTNET_SETTLEMENT`). See [What is real](#what-is-real-and-what-is-simulated).
 
 ## The problem
 
@@ -38,11 +38,11 @@ Households that already own a battery sell its stored solar energy to the shop n
 
 ```mermaid
 flowchart LR
-  W[Wokwi ESP32<br/>Meter A] -- telemetry --> M((MQTT))
+  W[Wokwi ESP32 x2<br/>METER_A + METER_B] -- telemetry + final readings --> M((MQTT))
   M --> U[Unity<br/>digital twin]
-  M --> GA[Meter A gateway]
-  GA --> GB[Meter B]
-  GA & GB -- signed readings --> R[Relayer]
+  M --> R[Relayer<br/>verify + evidence store]
+  R -- sign request --> GA[Seller gateway<br/>key A] & GB[Buyer gateway<br/>key B]
+  GA & GB -- signed readings --> R
   D[Dashboard] -- Buyer Request --> R
   R -- control --> M
   R -- openTrade / settleTrade --> C[AegisEscrow<br/>Base Sepolia]
@@ -52,7 +52,8 @@ flowchart LR
 1. **Day:** the battery charges from solar surplus.
 2. **Outage:** the microgrid is islanded from the utility grid (the PCC opens). The shop presses **Request clean power** and pays a deposit into escrow.
 3. **Supply:** the battery serves the shop first and keeps a 5% reserve. Community loads get power only if the owner allows emergency backup.
-4. **Settlement:** both meters sign their final readings. Within 3% → the contract pays for what the shop received. Beyond 3% → the deposit is **frozen as Disputed**.
+4. **Verification:** both meters report their final energy. The backend checks them (same trade, buyer ≤ seller, gap within 3%, on the exact and on the whole-Wh values) and stores the evidence.
+5. **Settlement:** each meter's gateway signs its own reading, and the contract checks both signatures and pays for what the shop received. Readings that disagree are never paid. For simulated meters this step is off by default and runs only in labelled testnet demos.
 
 > [!IMPORTANT]
 > Feeding power into utility lines during an outage endangers line workers. The design assumes a community microgrid with an islanding switch, so P2P supply happens only inside the islanded street.
@@ -65,14 +66,16 @@ flowchart LR
 | Tampered buyer meter (contract v1) | 138 vs 81 Wh → **disputed, funds frozen** · [details](docs/evidence.md) |
 | Seller payout | `withdraw()` paid out; a second attempt reverted · [details](docs/evidence.md) |
 | Cost per settlement | ~98k to 184k gas measured on-chain; a dispute costs ~58k |
-| Tests | 26 contract tests · 21 backend tests |
+| Tests | 26 contract tests · 31 backend tests |
 
 ## What is real and what is simulated
 
 | Part | Status |
 |---|---|
-| Seller meter (Meter A) | 🟡 Simulated: ESP32 in Wokwi, potentiometers instead of sensors |
-| Buyer meter (Meter B) | 🟡 Simulated: separate process with its own key, 2% line loss |
+| Seller meter (METER_A) | 🟡 Simulated: ESP32 in Wokwi, potentiometers instead of sensors |
+| Buyer meter (METER_B) | 🟡 Simulated: second ESP32 in Wokwi, derived from METER_A with 2% line loss (not an independent measurement) |
+| Meter signatures | 🟡 Each meter's key is held by a separate gateway process that attests its own Wokwi final reading; the contract checks both registered signers |
+| On-chain settlement of Wokwi trades | 🟡 Off by default (`SETTLEMENT_MODE=off`: verified only). Testnet demo runs are labelled `SIMULATED_TESTNET_SETTLEMENT` |
 | Digital twin | 🟢 Unity scene, driven live by the Wokwi telemetry |
 | Signed readings, verification | 🟢 Real: EIP-712 signatures, checked again by the contract |
 | Escrow, fee split, disputes, payouts | 🟢 Real contract on Base Sepolia (test ETH, no real money) |
@@ -88,20 +91,20 @@ git clone --recurse-submodules https://github.com/la-prmtsr/aegis-grid-africa.gi
 cd aegis-grid-africa && cp .env.example .env   # testnet keys only, never commit .env
 
 cd contracts && forge test && cd ..           # 26 tests
-cd bridge && npm install && npm test          # 21 tests
+cd bridge && npm install && npm test          # 31 tests
 ```
 
 Run the demo without hardware (needs testnet keys and contract v2 in `.env`, see the [integration guide](docs/integration-v2.md)):
 
 ```bash
 # terminal 1: Wokwi-compatible mock + Meter A + Meter B + relayer
-cd bridge && npm run v2:mock        # add -- --monitor to run without any blockchain keys
+cd bridge && npm run v2:mock        # verify only; SETTLEMENT_MODE=testnet npm run v2:mock settles on testnet
 
 # terminal 2: dashboard on http://localhost:5173/console.html?guest
 cd web && npm install && npm run dev
 ```
 
-In the dashboard: **Operator → Control room** (PV, load, utility outage, emergency backup, engine Mock or Wokwi live), turn on **Utility outage**, then **Buyer → Request power**, wait, then **Stop and pay**. Turn on **Tamper Meter B** first to see a dispute. Unity only visualises; every control is in the dashboard. Deployment, the Mosquitto bridge for Wokwi and all MQTT topics: [docs/integration-v2.md](docs/integration-v2.md).
+In the dashboard: **Operator → Control room** (PV, load, utility outage, emergency backup, engine Mock or Wokwi live), turn on **Utility outage**, then **Buyer → Request power**, wait, then **Stop and pay**. Turn on **Tamper Meter B** first to see the backend reject a trade. Receipts are in **Operator → Oracle**. Unity only visualises; every control is in the dashboard. Deployment, the Mosquitto bridge for Wokwi and all MQTT topics: [docs/integration-v2.md](docs/integration-v2.md).
 
 ## Repository
 

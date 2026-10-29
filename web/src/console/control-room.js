@@ -128,7 +128,9 @@ export function ctlToggles() {
     ${tile('t-outage', 'outage', 'Utility outage', m?.outage ? 'Islanded' : 'Off', !!m?.outage, 'red', none, 'Opens the PCC: the street runs on the battery only')}
     ${tile('t-request', 'request', 'Buyer request', requesting ? (tradeId ? `Trade #${tradeId}` : 'Opening…') : 'Off', requesting, 'blue', none, 'UMKM B asks for 250 W: opens a trade on-chain')}
     ${tile('t-backup', 'backup', 'Emergency backup', m?.backup ? 'On' : 'Off', !!m?.backup, 'green', none, 'Resident A lets the battery also feed the community loads')}
-    ${tile('t-tamper', 'tamper', 'Tamper Meter B', b?.tamper ? '−40%' : 'Off', !!b?.tamper, 'amber', !b, 'Meter B under-reports by 40%: the trade should end disputed')}
+    ${be?.controls?.tamper === false
+      ? tile('t-tamper', 'tamper', 'Tamper Meter B', 'In Wokwi', false, 'amber', true, 'Stage 5B: METER_B runs as Faras’s ESP32 in Wokwi. Switch its tamper there; the backend never alters a meter value.')
+      : tile('t-tamper', 'tamper', 'Tamper Meter B', b?.tamper ? '−40%' : 'Off', !!b?.tamper, 'amber', !b, 'Meter B under-reports by 40%: the backend rejects the trade')}
   </div>`;
 }
 

@@ -26,7 +26,8 @@ const MOCK_CONTROL = {
 };
 
 function envFor(allowedKeys) {
-  const base = { ...process.env, ...parsed, AEGIS_ENV_FILTERED: '1' };
+  // like dotenv: a variable set in the shell (SETTLEMENT_MODE=testnet npm run v2) wins over .env
+  const base = { ...parsed, ...process.env, AEGIS_ENV_FILTERED: '1', ...(mock ? { AEGIS_MOCK: '1' } : {}) };
   if (mock) for (const [k, v] of Object.entries(MOCK_CONTROL)) if (!base[k]) base[k] = v;
   for (const k of Object.keys(base)) if (/PRIVATE_KEY$/.test(k) && !allowedKeys.includes(k)) delete base[k];
   return base;

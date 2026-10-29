@@ -33,6 +33,9 @@ export function startMqtt() {
     } else if (topic === topics.telemetry(METER.seller)) {
       onSeller(msg);
     } else if (topic === topics.telemetry(METER.buyer)) {
+      // Faras's METER_B firmware (Stage 5B.2) publishes its own format on this topic too; the dashboard
+      // view is the backend's v2 message.
+      if (msg.v !== 2) return;
       state.lastSeen[METER.buyer] = Date.now();
       update({ buyer: msg, grid: state.grid ?? msg.grid });
       pushSample();

@@ -13,7 +13,8 @@ const STATUS = {
 };
 // fractions of a cent would round to $0.00 and look like nothing was paid
 const cash = (v) => (v != null && v > 0 && v < 0.001 ? '&lt;$0.001' : usd(v));
-const whTxt = (v) => (v == null ? '–' : `${Math.round(Number(v)).toLocaleString('en-US')}`);
+// whole Wh as on-chain; firmware finals (Stage 5B) keep two decimals
+const whTxt = (v) => (v == null ? '–' : Number.isInteger(Number(v)) ? Number(v).toLocaleString('en-US') : Number(v).toFixed(2));
 
 /** Drawer header: which trade, and newer / older buttons (the Oracle table is the full list). */
 export function receiptNav(list, selectedId) {
@@ -78,7 +79,9 @@ export function mountReceiptDrawer(onPick) {
  */
 export function receiptHTML(t, r, o) {
   if (!t) return '<p class="empty">No trade yet. A receipt appears here as soon as a buyer request opens a trade.</p>';
-  const [tone, label] = t.status === 'Settled' && t.disputed ? ['warn', 'Resolved by arbiter'] : STATUS[t.status] || ['idle', t.status];
+  const bt = o.backend || null; // Stage 5B.3 backend record (verdict, label, fractional finals)
+  const BT = { SIMULATION_VERIFIED: ['ok', 'Simulation verified'], REJECTED: ['bad', 'Rejected · not settled'], FAILED: ['bad', 'Failed · not settled'], SIGNING: ['blue', 'Signing'], AWAITING_EVIDENCE: ['warn', 'Awaiting evidence'] };
+  const [tone, label] = t.status === 'Settled' && t.disputed ? ['warn', 'Resolved by arbiter'] : t.status === 'Open' && BT[bt?.status] ? BT[bt.status] : STATUS[t.status] || ['idle', t.status];
   const sent = r.sellerWh, got = r.buyerWh;
   const gap = sent ? ((sent - got) / sent) * 100 : null;
   const within = gap != null && Math.abs(gap) <= o.tolPct;
@@ -86,13 +89,16 @@ export function receiptHTML(t, r, o) {
 
   // verdict line
   let verdict;
-  if (t.status === 'Open') verdict = ['warn', 'Trade open', o.note || 'The meters are counting. The receipt is final once both meters sign and the relayer settles.'];
+  if (t.status === 'Open' && bt?.status === 'SIMULATION_VERIFIED') verdict = ['ok', `Simulation verified: gap ${gap == null ? '?' : gap.toFixed(2)}% (limit ${o.tolPct}%)`, 'Both Wokwi final readings are consistent. SETTLEMENT_MODE=off: simulated readings are not settled on-chain, so the deposit returns to the buyer when the trade expires.'];
+  else if (t.status === 'Open' && (bt?.status === 'REJECTED' || bt?.status === 'FAILED')) verdict = ['bad', 'Rejected by the backend: nothing sent on-chain', `${bt.reason || 'The evidence failed a check'}. The deposit returns to the buyer when the trade expires.`];
+  else if (t.status === 'Open') verdict = ['warn', 'Trade open', o.note || 'The meters are counting. The receipt is final once the backend has checked both final readings.'];
   else if (t.status === 'Refunded') verdict = ['idle', 'Refunded', 'No energy was billed. The full deposit went back to the buyer.'];
   else if (t.status === 'Disputed') verdict = ['bad', `Readings disagree by ${gap == null ? '?' : gap.toFixed(1)}% (limit ${o.tolPct}%)`, 'The contract froze the deposit. Nobody is paid until the arbiter resolves it, or it is refunded after 7 days.'];
   else if (t.disputed) verdict = ['warn', 'Resolved by the arbiter', `The arbiter accepted ${whTxt(t.deliveredWh)} Wh after a dispute.`];
   else verdict = ['ok', 'Readings consistent: settled on-chain', `Both signatures checked by the contract. The buyer pays only for the ${whTxt(t.deliveredWh ?? got)} Wh Meter B received.`];
 
   // money (the same records the ledger shows)
+  const offDone = t.status === 'Open' && ['SIMULATION_VERIFIED', 'REJECTED', 'FAILED'].includes(bt?.status);
   const recs = momoForTrade(t, o.shares);
   const amt = (k) => recs.find((x) => x.kind === k)?.amount;
   const paidWh = t.status === 'Settled' ? t.deliveredWh : null;
@@ -100,11 +106,11 @@ export function receiptHTML(t, r, o) {
   const sp = 10000 - o.shares.util - o.shares.plat;
   const money = [
     ['Deposit from buyer', `${usd(depositUsd(t.maxWh))}`, t.status === 'Disputed' ? 'held in escrow' : `up to ${whTxt(t.maxWh || MOMO.tradeMaxWh)} Wh`, ''],
-    ['Energy billed', paid != null ? cash(paid) : '–', paidWh != null ? `${whTxt(paidWh)} Wh × ${usd(MOMO.usdPerKWh)}/kWh` : t.status === 'Disputed' ? 'frozen' : 'not yet', ''],
+    ['Energy billed', paid != null ? cash(paid) : '–', paidWh != null ? `${whTxt(paidWh)} Wh × ${usd(MOMO.usdPerKWh)}/kWh` : t.status === 'Disputed' ? 'frozen' : offDone ? 'not settled' : 'not yet', ''],
     ['Seller receives', paid != null ? cash(paid * sp / 10000) : '–', `${sp / 100}% · ${esc(MOMO.sellerPhone)}`, 'em'],
     ['Utility grid fee', paid != null ? cash(paid * o.shares.util / 10000) : '–', `${o.shares.util / 100}%`, ''],
     ['Aegis platform fee', paid != null ? cash(paid * o.shares.plat / 10000) : '–', `${o.shares.plat / 100}%`, ''],
-    ['Refund to buyer', amt('refund') != null ? cash(amt('refund')) : '–', t.status === 'Settled' || t.status === 'Refunded' ? esc(MOMO.buyerPhone) : t.status === 'Disputed' ? 'held in escrow' : 'after settlement', 'em'],
+    ['Refund to buyer', amt('refund') != null ? cash(amt('refund')) : '–', t.status === 'Settled' || t.status === 'Refunded' ? esc(MOMO.buyerPhone) : t.status === 'Disputed' ? 'held in escrow' : offDone ? 'full deposit, after the trade expires' : 'after settlement', 'em'],
   ];
   const tx = t.settleTx || t.refundTx || t.openTx;
   const when = t.settleTime || t.refundTime || t.openTime;
@@ -112,7 +118,7 @@ export function receiptHTML(t, r, o) {
   return `<article class="rc" aria-label="Receipt for trade ${t.id}">
     <header class="rc-h">
       <div><h3>Trade #${t.id}<span>Dual-meter receipt</span></h3><small class="mono">${when ? o.clock(when) : ''}</small></div>
-      <span class="pill ${tone}">${label}</span>
+      <span class="rc-pills">${bt?.label ? `<span class="pill sim" title="Settled on Base Sepolia testnet with gateway-signed readings from the Wokwi simulation. METER_B is derived from METER_A.">${esc(bt.label)}</span>` : ''}<span class="pill ${tone}">${label}</span></span>
     </header>
     <div class="rc-body">
       <div class="rc-energy">

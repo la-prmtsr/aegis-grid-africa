@@ -53,9 +53,18 @@ const decide = (s, b, extra = {}) =>
 test('honest trade: buyer reads 98% of seller, settles', () => {
   const { sellerFinal: s, buyerFinal: b } = runTrade();
   // 59 counted intervals x 1 s x 60 = 59 simulated minutes at 250 W
-  assert.equal(s.wh, Math.round((250 * 59) / 60));
+  assert.equal(s.wh, Math.floor((250 * 59) / 60)); // whole Wh, never rounded up
   assert.ok(Math.abs(b.whExact - s.whExact * 0.98) < 1e-9, `${b.whExact} vs ${s.whExact}`);
   assert.equal(decide(s, b).expected, 'SETTLED');
+});
+
+test('rounding guard: exact readings agree but whole Wh would not -> hold, not a false dispute', () => {
+  // seen in the e2e run: 62.5875 vs 61.33575 Wh is a 2.0% gap; rounding to 63 vs 61 would read as 3.17%
+  const s = { tradeId: 7, role: 'seller', wh: 63, whExact: 62.5875, socBpsAfter: 6000, issues: [] };
+  const b = { tradeId: 7, role: 'buyer', wh: 61, whExact: 61.33575 };
+  const d = decide(s, b);
+  assert.equal(d.action, 'hold');
+  assert.match(d.reason, /whole Wh/);
 });
 
 test('tampered buyer meter: readings disagree, submitted so the contract freezes the deposit', () => {

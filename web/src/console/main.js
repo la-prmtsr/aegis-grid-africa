@@ -106,9 +106,24 @@ function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.add
 const SELLER_STATUS = { IDLE_GRID: 'Grid on, idle', CHARGING: 'Charging from solar', BATTERY_FULL: 'Full, solar curtailed', ISLAND: 'Islanded, battery standing by', EXPORTING: 'Selling to the shop', WAIT_OUTAGE: 'Trade open, waiting for outage', SOC_FLOOR: 'At the 5% reserve' };
 const BUYER_STATUS = { IDLE_GRID: 'Grid on', REQUESTING: 'Requesting power', RECEIVING: 'Receiving clean power', NO_SUPPLY: 'No supply' };
 const STATUS_PILL = { Open: 'warn', Settled: 'ok', Disputed: 'bad', Refunded: 'idle' };
+// Stage 5B.3: the backend's own verdict for a trade (state.backend.trades). With SETTLEMENT_MODE=off a verified
+// trade stays Open on-chain until it expires, so the dashboard shows the backend status instead.
+const backendTrade = (id) => (state.backend?.trades || []).find((x) => x.id === Number(id)) || null;
+const OFFCHAIN_DONE = ['SIMULATION_VERIFIED', 'REJECTED', 'FAILED'];
+const closedOffChain = (t) => t.status === 'Open' && OFFCHAIN_DONE.includes(backendTrade(t.id)?.status);
+const BACKEND_PILL = { PENDING: ['warn', 'Opening'], ACTIVE: ['warn', 'Active'], STOPPED: ['warn', 'Stopped'], AWAITING_EVIDENCE: ['warn', 'Awaiting evidence'], SIGNING: ['blue', 'Signing'], SIMULATION_VERIFIED: ['ok', 'Simulation verified'], REJECTED: ['bad', 'Rejected'], FAILED: ['bad', 'Failed'] };
+/** [pill class, label] for a trade: on-chain status, or the backend verdict while it is still Open on-chain. */
+function resultOf(t) {
+  const bt = backendTrade(t.id);
+  if (t.status === 'Open' && bt && BACKEND_PILL[bt.status]) return BACKEND_PILL[bt.status];
+  if (t.status === 'Settled' && t.disputed) return ['warn', 'Resolved'];
+  return [STATUS_PILL[t.status] || 'idle', t.status];
+}
+const fmtWh = (v) => (v == null ? '–' : Number.isInteger(Number(v)) ? String(v) : Number(v).toFixed(2));
+const simLabel = (t) => (backendTrade(t.id)?.label ? '<span class="pill sim" title="Settled on Base Sepolia testnet with gateway-signed readings from the Wokwi simulation. METER_B is derived from METER_A.">Simulated testnet settlement</span>' : '');
 
 const myTrades = (who) => tradeList().filter((t) => same(who === 'buyer' ? t.buyer : t.seller, ACCOUNTS[who].address));
-const openTradeFor = (who) => myTrades(who).find((t) => t.status === 'Open' && (!t.expiresAt || t.expiresAt * 1000 > Date.now()));
+const openTradeFor = (who) => myTrades(who).find((t) => t.status === 'Open' && !closedOffChain(t) && (!t.expiresAt || t.expiresAt * 1000 > Date.now()));
 const withdrawableOf = (addr) => state.withdrawable[addr?.toLowerCase()] ?? null;
 const pricePerWhOf = (t) => (t?.pricePerWh != null ? BigInt(t.pricePerWh) : null);
 const shareBps = () => ({ util: state.totals?.utilityBps ?? 1500, plat: state.totals?.platformBps ?? 200 });
@@ -116,9 +131,10 @@ const shareBps = () => ({ util: state.totals?.utilityBps ?? 1500, plat: state.to
 /** Seller and buyer final readings for a trade: from the dispute event, the settle event, or MQTT. */
 function readingsOf(t) {
   const r = state.readings[t.id] || {};
-  const sellerWh = t.sellerWh ?? (r.seller ? Number(r.seller.wh) : null);
-  const buyerWh = t.buyerWh ?? (r.buyer ? Number(r.buyer.wh) : (t.status === 'Settled' && !t.disputed ? t.deliveredWh : null));
-  return { sellerWh, buyerWh, socAfter: r.seller?.socBpsAfter ?? null, tamper: r.buyer?.tamper ?? null };
+  const f = backendTrade(t.id)?.finals || {}; // Stage 5B: unsigned firmware finals (fractional Wh)
+  const sellerWh = t.sellerWh ?? (r.seller ? Number(r.seller.wh) : f.seller ? f.seller.wh : null);
+  const buyerWh = t.buyerWh ?? (r.buyer ? Number(r.buyer.wh) : f.buyer ? f.buyer.wh : (t.status === 'Settled' && !t.disputed ? t.deliveredWh : null));
+  return { sellerWh, buyerWh, socAfter: r.seller?.socBpsAfter ?? f.seller?.socBpsAfter ?? null, tamper: r.buyer?.tamper ?? f.buyer?.tamper ?? null };
 }
 
 function connectionNotice() {
@@ -345,24 +361,29 @@ function buyerParts() {
   } else if (tradeId && (requesting || buyer?.status === 'RECEIVING')) {
     const price = pricePerWhOf(t);
     const got = Number(buyer?.tradeWh || 0);
+    const fiveB = state.backend?.stage5b?.evidence === 'wokwi-final'; // METER_B firmware reports its energy in the final event
     html = `<div class="live"><div class="ph"><h2>Live session · trade #${tradeId}</h2><span class="pill ${buyer?.status === 'RECEIVING' ? 'ok' : 'warn'}">${esc(BUYER_STATUS[buyer?.status] || buyer?.status || 'Starting')}</span></div>
       <div class="live-num"><b class="mono">${Math.round(Number(buyer?.importW || 0))}</b><span>W from the seller's battery${seller ? ` · battery ${pct(seller.socBps)}` : ''}</span></div>
       <div class="flowbar" aria-hidden="true"><i></i></div>
       <div class="rows">
-        <div class="row"><span>Energy received (your meter)</span><b>${got.toFixed(1)} Wh</b></div>
-        <div class="row"><span>Cost so far</span><b>${usd(whToUsd(Math.floor(got)))} <small class="muted">· ${price != null ? money(BigInt(Math.floor(got)) * price) : '–'}</small></b></div>
+        ${fiveB ? `<div class="row"><span>Energy received (your meter)</span><b class="muted" style="font-weight:500">reported when you stop</b></div>`
+          : `<div class="row"><span>Energy received (your meter)</span><b>${got.toFixed(1)} Wh</b></div>
+        <div class="row"><span>Cost so far</span><b>${usd(whToUsd(Math.floor(got)))} <small class="muted">· ${price != null ? money(BigInt(Math.floor(got)) * price) : '–'}</small></b></div>`}
         <div class="row"><span>Deposit paid with MoMo</span><b>${usd(depositUsd(t?.maxWh))} <span class="pill sim">sim</span></b></div>
         <div class="row"><span>Escrowed on-chain</span><b>${t?.maxWh && price != null ? money(BigInt(t.maxWh) * price) : '–'}</b></div>
         <div class="row"><span>Still unserved</span><b>${watts(buyer?.unservedW)}</b></div>
         <div class="row"><span>Opened</span><b>${t?.openTx ? `<a class="ext" href="${txUrl(t.openTx)}" target="_blank" rel="noopener">${shortHash(t.openTx)}</a>` : 'waiting for event…'}</b></div>
       </div>
       <button class="btn btn-line" type="button" data-act="request-off">Stop and pay</button></div>`;
-  } else if (tradeId && t?.status === 'Open') {
+  } else if (tradeId && t?.status === 'Open' && !closedOffChain(t)) {
+    const fin = backendTrade(tradeId)?.finals || {};
+    const sWh = rd.seller ? rd.seller.wh : fin.seller?.wh ?? null;
+    const bWh = rd.buyer ? rd.buyer.wh : fin.buyer?.wh ?? null;
     html = `<div class="req-card"><div class="ph"><h2>Closing trade #${tradeId}</h2><span class="pill blue">Verifying</span></div>
       <ul class="timeline">
-        <li class="done">Seller meter final reading: ${rd.seller ? wh(rd.seller.wh) : '…'}</li>
-        <li class="${rd.buyer ? 'done' : 'now'}">Your meter final reading: ${rd.buyer ? wh(rd.buyer.wh) : '…'}</li>
-        <li class="${rd.buyer ? 'now' : ''}">Each meter signed its own reading (EIP-712); the backend verifies both and calls settleTrade</li>
+        <li class="${sWh != null ? 'done' : 'now'}">Seller meter final reading: ${sWh != null ? `${fmtWh(sWh)} Wh` : '…'}</li>
+        <li class="${bWh != null ? 'done' : 'now'}">Your meter final reading: ${bWh != null ? `${fmtWh(bWh)} Wh` : '…'}</li>
+        <li class="${bWh != null ? 'now' : ''}">${state.backend?.stage5b?.settlementMode === 'testnet' ? 'The backend checks both readings, each gateway signs its own (EIP-712), then settleTrade on testnet' : 'The backend checks both readings (3% tolerance); settlement is off for simulated readings'}</li>
       </ul></div>`;
   } else if (ui.momo) {
     html = momoCheckoutHTML();
@@ -379,7 +400,7 @@ function buyerParts() {
   patch('b-action', html);
 
   // --- last receipt
-  const closed = myTrades('buyer').filter((x) => x.status !== 'Open');
+  const closed = myTrades('buyer').filter((x) => x.status !== 'Open' || closedOffChain(x));
   patch('b-receipt', closed.length ? receiptHTML(closed[0]) : `<div class="ph"><h2>Last receipt</h2></div><p class="empty">Your receipt appears here after a trade settles: both meter readings, the split and the transaction.</p>`);
   patch('b-list', tradesTable(myTrades('buyer'), 'buyer'));
 
@@ -396,13 +417,14 @@ function receiptHTML(t) {
   const { sellerWh, buyerWh, tamper } = readingsOf(t);
   const gap = sellerWh != null && buyerWh != null ? gapPct(sellerWh, buyerWh) : null;
   const tol = (t.toleranceBps ?? state.totals?.toleranceBps ?? 300) / 100;
-  const pill = STATUS_PILL[t.status] || 'idle';
-  const label = t.status === 'Settled' ? (t.disputed ? 'Resolved · paid' : 'Verified · paid') : t.status === 'Disputed' ? 'Disputed · funds frozen' : t.status;
-  return `<div class="ph"><h2>Trade #${t.id}</h2><span class="pill ${pill}">${label}</span></div>
+  const bt = backendTrade(t.id);
+  const [pill, label] = t.status === 'Settled' ? ['ok', t.disputed ? 'Resolved · paid' : 'Verified · paid'] : t.status === 'Disputed' ? ['bad', 'Disputed · funds frozen'] : resultOf(t);
+  const signedTxt = bt && !bt.label ? 'Wh · meter final' : 'Wh · signed';
+  return `<div class="ph"><h2>Trade #${t.id}</h2><span style="display:flex;gap:6px;flex-wrap:wrap">${simLabel(t)}<span class="pill ${pill}">${label}</span></span></div>
   <div class="receipt">
     <div class="meters">
-      <div><span>Meter A · seller sent</span><b>${sellerWh != null ? sellerWh : '–'}</b> <em>Wh · signed</em></div><span aria-hidden="true">⇄</span>
-      <div><span>Meter B · shop received</span><b>${buyerWh != null ? buyerWh : '–'}</b> <em>Wh · signed</em></div>
+      <div><span>Meter A · seller sent</span><b>${fmtWh(sellerWh)}</b> <em>${signedTxt}</em></div><span aria-hidden="true">⇄</span>
+      <div><span>Meter B · shop received</span><b>${fmtWh(buyerWh)}</b> <em>${signedTxt}</em></div>
     </div>
     <div class="rows">
       <div class="row"><span>Difference</span><b style="color:${gap == null ? 'inherit' : gap <= tol ? 'var(--green)' : 'var(--alert)'}">${gap == null ? '–' : `${gap.toFixed(1)}% · ${gap <= tol ? 'within' : 'over'} ${tol}%`}</b></div>
@@ -415,9 +437,11 @@ function receiptHTML(t) {
       <div style="background:var(--amber-soft)"><span>Aegis fee</span><b>${money(t.platformShare)}</b></div></div>
       <div class="row" style="border:0;padding:0"><span>Unused deposit back to buyer</span><b>${money(t.buyerRefund)}</b></div>`
     : t.status === 'Disputed' ? `<p style="margin:0;font-size:13.5px;color:#7F1D1D">The two meters disagree by more than ${tol}%. The escrow keeps the deposit until the arbiter resolves it, or refunds the buyer after the dispute window.</p>`
-    : t.status === 'Refunded' ? `<div class="row" style="border:0;padding:0"><span>Refunded to buyer</span><b>${money(t.refundAmount)}</b></div>` : ''}
+    : t.status === 'Refunded' ? `<div class="row" style="border:0;padding:0"><span>Refunded to buyer</span><b>${money(t.refundAmount)}</b></div>`
+    : bt?.status === 'SIMULATION_VERIFIED' ? `<p style="margin:0;font-size:13.5px;color:var(--muted)">Both Wokwi meters agree within ${tol}%. Settlement is switched off for simulated readings, so nothing was paid. The deposit returns to you when the trade expires.</p>`
+    : bt?.status === 'REJECTED' || bt?.status === 'FAILED' ? `<p style="margin:0;font-size:13.5px;color:#7F1D1D">Not settled: ${esc(bt.reason || 'the evidence failed a check')}. Nothing was paid; the deposit returns to you when the trade expires.</p>` : ''}
     ${momoBlock(t)}
-    <div class="row" style="border:0;padding:0"><span>Transaction</span><b>${(t.settleTx || t.refundTx) ? `<a class="ext" href="${txUrl(t.settleTx || t.refundTx)}" target="_blank" rel="noopener">${shortHash(t.settleTx || t.refundTx)}</a>` : '–'}</b></div>
+    <div class="row" style="border:0;padding:0"><span>Transaction</span><b>${(t.settleTx || t.refundTx || t.openTx) ? `<a class="ext" href="${txUrl(t.settleTx || t.refundTx || t.openTx)}" target="_blank" rel="noopener">${shortHash(t.settleTx || t.refundTx || t.openTx)}</a>` : '–'}</b></div>
   </div>`;
 }
 
@@ -478,11 +502,11 @@ function tradesTable(list, who) {
     return `<tr class="${t.status === 'Disputed' ? 'flag' : ''}">
       <td data-label="Trade" class="mono">#${t.id}</td>
       <td data-label="Opened">${clock(t.openTime)}</td>
-      <td data-label="Seller sent" class="num">${sellerWh ?? '–'}</td>
-      <td data-label="Shop received" class="num">${buyerWh ?? '–'}</td>
+      <td data-label="Seller sent" class="num">${fmtWh(sellerWh)}</td>
+      <td data-label="Shop received" class="num">${fmtWh(buyerWh)}</td>
       <td data-label="Difference" class="num">${gap == null ? '–' : gap.toFixed(1) + '%'}</td>
       <td data-label="${who === 'seller' ? 'Your share' : 'Paid'}" class="num">${amount != null ? money(amount) : '–'}</td>
-      <td data-label="Status"><span class="pill ${STATUS_PILL[t.status] || 'idle'}">${t.status}</span></td>
+      <td data-label="Status"><span class="pill ${resultOf(t)[0]}">${resultOf(t)[1]}</span></td>
       <td data-label="Tx">${(t.settleTx || t.openTx) ? `<a class="ext" href="${txUrl(t.settleTx || t.openTx)}" target="_blank" rel="noopener">${shortHash(t.settleTx || t.openTx)}</a>` : '–'}</td></tr>`;
   }).join('');
   return `<div class="tbl-wrap"><table><thead><tr><th>Trade</th><th>Opened</th><th class="num">Seller sent (Wh)</th><th class="num">Shop received (Wh)</th><th class="num">Difference</th><th class="num">${who === 'seller' ? 'Your share' : 'Paid'}</th><th>Status</th><th>Tx</th></tr></thead><tbody>${rows}</tbody></table></div>`;
@@ -714,9 +738,9 @@ function opsParts() {
         : `<span class="muted" style="font-size:12.5px">owner resolves</span>`;
       else if (t.status === 'Open' && expired) action = `<button class="btn btn-line btn-sm" type="button" data-act="refund" data-id="${t.id}">Refund buyer</button>`;
       return `<tr class="${t.status === 'Disputed' ? 'flag' : ''} rc-link" data-act="receipt" data-id="${t.id}" tabindex="0" title="Open the receipt of trade #${t.id}"><td data-label="Trade" class="mono">#${t.id}</td><td data-label="Opened">${clock(t.openTime)}</td>
-        <td data-label="Seller (Wh)" class="num">${sellerWh ?? '–'}</td><td data-label="Buyer (Wh)" class="num">${buyerWh ?? '–'}</td>
+        <td data-label="Seller (Wh)" class="num">${fmtWh(sellerWh)}</td><td data-label="Buyer (Wh)" class="num">${fmtWh(buyerWh)}</td>
         <td data-label="Gap" class="num" style="color:${gap != null && gap > (T?.toleranceBps ?? 300) / 100 ? 'var(--alert)' : 'inherit'}">${gap == null ? '–' : gap.toFixed(1) + '%'}</td>
-        <td data-label="Result"><span class="pill ${STATUS_PILL[t.status] || 'idle'}">${t.status === 'Settled' && t.disputed ? 'Resolved' : t.status}</span></td>
+        <td data-label="Result"><span class="pill ${resultOf(t)[0]}">${resultOf(t)[1]}</span>${backendTrade(t.id)?.label ? ' <span class="pill sim" title="SIMULATED_TESTNET_SETTLEMENT">sim</span>' : ''}</td>
         <td data-label="Tx">${(t.settleTx || t.openTx) ? `<a class="ext" href="${txUrl(t.settleTx || t.openTx)}" target="_blank" rel="noopener">${shortHash(t.settleTx || t.openTx)}</a>` : '–'}</td>
         <td data-label="Action">${action}</td><td class="rc-go" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></td></tr>`;
     }).join('')}</tbody></table></div>`);
@@ -739,7 +763,7 @@ function opsParts() {
   // receipt drawer (opened from an Oracle row): the trade picked, else the newest one
   const rcTrade = list.find((t) => t.id === ui.receiptId) || list[0];
   patch('o-rc-head', receiptNav(list, rcTrade?.id));
-  patch('o-receipt', tradeReceiptHTML(rcTrade, rcTrade ? readingsOf(rcTrade) : {}, { shares: shareBps(), tolPct: (T?.toleranceBps ?? 300) / 100, lossPct: 2, txUrl, clock }));
+  patch('o-receipt', tradeReceiptHTML(rcTrade, rcTrade ? readingsOf(rcTrade) : {}, { shares: shareBps(), tolPct: (T?.toleranceBps ?? 300) / 100, lossPct: 2, txUrl, clock, backend: rcTrade ? backendTrade(rcTrade.id) : null }));
 
   patch('o-momo', `<div class="ph"><h2>Mobile money ledger</h2><span class="pill sim">Simulated MoMo</span></div>
     <div class="kpis" style="margin-bottom:12px">
