@@ -943,3 +943,9 @@ tr.rc-link:hover td{background:#F6F8FA}
 .ei-foot span{display:block;font-size:12px}
 .ei-foot b{font-size:20px!important;margin:2px 0 0!important;color:#fff}
 @media (max-width:420px){ .brand{font-size:15px;gap:6px} .brand svg{width:22px;height:22px} .viewas select{padding-left:10px;padding-right:24px;font-size:12.5px} button.live{padding:8px 4px} }
+/* operator top bar (6 pages): compact steps so it never runs out of the line */
+@media (max-width:1680px){ .top.many .topnav a{padding:9px 12px;font-size:13.5px} .top.many .top-r{gap:6px} .top.many .acct-name{display:none} .top.many .acct{padding:3px} }
+@media (max-width:1480px){ .top.many button.live span{display:none} .top.many button.live{padding:8px} .top.many .btn-wallet .w-text,.top.many .btn-wallet .w-role{display:none} .top.many .btn-wallet{padding:9px} }
+@media (max-width:1320px){ .top.many .topnav a{padding:9px 11px} .top.many .topnav a svg{display:block;width:18px;height:18px} .top.many .topnav a span{display:none} }
+/* microgrid chart legend: centred under the plot */
+.panel.chart .legend{justify-content:center;gap:10px 18px;margin-top:12px}

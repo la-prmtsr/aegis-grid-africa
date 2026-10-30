@@ -225,8 +225,10 @@ function render() {
 
 function renderNav(k) {
   const items = NAV[k];
-  const link = ([id, label]) => `<a href="#${id}" data-go="${id}">${svgI(ICON[id])}<span>${label}</span></a>`;
+  const link = ([id, label]) => `<a href="#${id}" data-go="${id}" title="${label}">${svgI(ICON[id])}<span>${label}</span></a>`;
   side.innerHTML = items.length < 2 ? '' : `<span class="side-ind" aria-hidden="true"></span>${items.map(link).join('')}`;
+  // many pages (operator: 6) get a more compact top bar, see console.css ".top.many"
+  document.querySelector('.top')?.classList.toggle('many', items.length > 4);
   tabbar.hidden = items.length < 2;
   tabbar.innerHTML = items.map(link).join('');
 }

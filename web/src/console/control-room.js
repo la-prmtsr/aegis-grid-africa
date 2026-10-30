@@ -187,6 +187,5 @@ export function quickHTML() {
       ${row('Load served', m ? pctTxt(m.servedPct) : '–')}
       ${row('Energy status', m ? `<span class="pill ${statusTone(m.energyStatus)}">${esc(m.energyStatus)}</span>` : '–')}
     </div>
-    <button class="btn btn-dark" type="button" data-act="go-control" style="width:100%;margin-top:14px">Open control room</button>
-    <p class="note">Simulation controls (PV, load, outage, buyer request, tamper, engine) are in the control room; emergency backup is the battery owner's choice on the Seller page. Unity only visualises.</p>`;
+    <button class="btn btn-dark" type="button" data-act="go-control" style="width:100%;margin-top:14px">Open control room</button>`;
 }
