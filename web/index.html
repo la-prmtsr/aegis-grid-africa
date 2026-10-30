@@ -24,8 +24,8 @@
       <span>Aegis<span style="color:#17A348">–Grid</span></span>
     </a>
     <div class="links"><a href="#c1">How it works</a><a href="#c2">The problem</a><a href="#c5">Blackout</a><a href="#c10">Impact</a></div>
-    <a class="nav-login" href="./auth.html#login" data-auth="login">Log in</a>
-    <a class="btn btn-dark" href="./auth.html#signup" data-auth="signup">Sign up</a>
+    <a class="nav-login" href="./auth.html#login" data-auth="logout">Log in</a>
+    <a class="btn btn-dark" href="./auth.html#signup" data-auth="dash">Sign up</a>
   </div>
 </nav>
 <div class="rail" aria-label="Quick navigation">
@@ -45,7 +45,7 @@
       <p class="lede">Aegis-Grid turns household batteries into one virtual power plant. They store the solar power wasted at noon, then sell it to the shop next door when load shedding hits, paid with mobile money and settled by a smart contract.</p>
       <div class="cta">
         <a class="btn btn-green" href="#c1">Follow one day on the grid ↓</a>
-        <a class="btn btn-ghost" href="./auth.html#signup" data-auth="signup">Get started</a>
+        <a class="btn btn-ghost" href="./auth.html#signup" data-auth="hide">Get started</a>
       </div>
       <div class="scroll-cue" aria-hidden="true"><i></i>Scroll to start the day</div>
     </div>
@@ -56,7 +56,6 @@
       <span class="eyebrow aegis"><i></i>07:00 · Onboarding</span>
       <h2>A battery owner joins with just a phone number.</h2>
       <p>A smart meter is fitted between the home's hybrid inverter and its battery. The owner signs in with MTN MoMo: no seed phrase, no gas fees. The battery is registered on-chain as a storage node, and this household becomes a seller.</p>
-      <div class="facts"><span class="fact">ESP32 + ACS712</span><span class="fact">ATECC608A signed</span><span class="fact">ERC-4337 account</span></div>
     </div></div>
   </section>
 
@@ -65,7 +64,6 @@
       <span class="eyebrow problem"><i></i>12:00 · The problem</span>
       <h2>At noon the sun makes more power than anyone can use.</h2>
       <p>Community solar peaks while home batteries are small, and there is no market to trade the surplus. So the extra energy is curtailed: clean power that was produced, paid for, then thrown away.</p>
-      <div class="facts"><span class="fact">Solar curtailment</span><span class="fact">No P2P market</span></div>
     </div></div>
   </section>
 
@@ -74,7 +72,6 @@
       <span class="eyebrow aegis"><i></i>12:30 · Smart surplus charge</span>
       <h2>Aegis stores the surplus instead of wasting it.</h2>
       <p>The digital twin spots surplus on the local feeder and signals the seller's meter. The battery charges at the cheapest rate of the day, then stops at 80% so it stays healthy for years.</p>
-      <div class="facts"><span class="fact">Digital twin</span><span class="fact">DOD 20–80%</span><span class="fact">Degradation fee</span></div>
     </div></div>
   </section>
 
@@ -83,7 +80,6 @@
       <span class="eyebrow problem"><i></i>17:30 · Peak load</span>
       <h2>Everyone comes home. The grid starts to strain.</h2>
       <p>Lights, fans and fridges switch on across the city at once. The grid cannot meet the evening peak, so the utility schedules load shedding for this feeder from 19:00.</p>
-      <div class="facts"><span class="fact">Evening peak</span><span class="fact">Load shedding at 19:00</span></div>
     </div></div>
   </section>
 
@@ -92,7 +88,6 @@
       <span class="eyebrow problem"><i></i>19:00 · Load shedding</span>
       <h2>The lights go out, and the generators start.</h2>
       <p>Down the street, a small shop keeps cold drinks and fish in a freezer. Without power the stock spoils, so the owner starts a diesel generator. Black smoke and noise fill the street where children play.</p>
-      <div class="facts"><span class="fact">PM2.5</span><span class="fact">CO₂</span><span class="fact">Noise</span></div>
     </div></div>
   </section>
 
@@ -101,7 +96,6 @@
       <span class="eyebrow aegis"><i></i>19:02 · Request clean power</span>
       <h2>With Aegis, the shop owner taps one button instead.</h2>
       <p>The buyer requests clean power and leaves a small MoMo deposit. Aegis looks for stored energy on the same transformer, within 500 m, to keep cable losses low. It finds the seller's battery 180 m away, full and ready.</p>
-      <div class="facts"><span class="fact">Locational matching</span><span class="fact">&lt; 500 m</span><span class="fact">Same transformer</span></div>
     </div></div>
   </section>
 
@@ -110,7 +104,6 @@
       <span class="eyebrow aegis"><i></i>19:03 · Peer-to-peer discharge</span>
       <h2>A neighbour's battery keeps the shop open.</h2>
       <p>The seller's hybrid inverter turns stored DC into 230 V AC and sends it down the street cable to the shop. The freezer hums again. The generator stays off, and the battery never drops below 20%.</p>
-      <div class="facts"><span class="fact">230 V AC</span><span class="fact">Hybrid inverter</span><span class="fact">No diesel</span></div>
     </div></div>
   </section>
 
@@ -119,7 +112,6 @@
       <span class="eyebrow chain"><i></i>21:00 · Dual-node verification</span>
       <h2>Two meters agree on every kilowatt-hour.</h2>
       <p>The seller's meter counts the energy that left. The buyer's meter counts the energy that arrived. Both sign their readings in hardware and exchange them over LoRa, even with the mobile network down. Nobody can fake a kilowatt-hour.</p>
-      <div class="facts"><span class="fact">kWh out vs kWh in</span><span class="fact">LoRa mesh</span><span class="fact">Offline signatures</span></div>
     </div></div>
   </section>
 
@@ -128,7 +120,6 @@
       <span class="eyebrow chain"><i></i>21:01 · Settlement</span>
       <h2>The escrow pays everyone in one transaction.</h2>
       <p>When the two readings agree within 3%, the smart contract on Base pays only for the energy the shop actually received. The seller gets 83%, the utility keeps a 15% grid fee for its cables, and Aegis takes 2%. Any unused deposit goes straight back to the buyer.</p>
-      <div class="facts"><span class="fact">Base escrow</span><span class="fact">3% tolerance</span><span class="fact">Pull payment</span></div>
     </div></div>
   </section>
 
@@ -137,7 +128,6 @@
       <span class="eyebrow aegis"><i></i>23:00 · Proof of impact</span>
       <h2>A quiet street, clean air, and power that was never wasted.</h2>
       <p>Every trade is recorded on-chain with the diesel it replaced. Noon sunshine became evening light, the seller earned, the buyer saved, and nobody built a new power station to make it happen.</p>
-      <div class="facts"><span class="fact">Diesel avoided</span><span class="fact">CO₂ offset</span><span class="fact">On-chain record</span></div>
     </div></div>
   </section>
 </main>
@@ -171,8 +161,8 @@
         <p class="live-stats" id="liveStats" hidden><i></i><span id="liveText">Reading the contract…</span> <a id="liveLink" target="_blank" rel="noopener">View contract</a></p>
       </div>
       <div class="cta">
-        <a class="btn btn-green" href="./auth.html#signup" data-auth="signup">Create your account</a>
-        <a class="btn btn-ghost" href="./auth.html#login" data-auth="login">Log in</a>
+        <a class="btn btn-green" href="./auth.html#signup" data-auth="dash">Create your account</a>
+        <a class="btn btn-ghost" href="./auth.html#login" data-auth="hide">Log in</a>
         <a class="btn btn-ghost" href="https://github.com/la-prmtsr/aegis-grid-africa" target="_blank" rel="noopener">View on GitHub</a>
       </div>
     </div>

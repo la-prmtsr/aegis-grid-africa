@@ -39,7 +39,6 @@ body{min-height:100vh;min-height:100dvh;background:#F6EBDD}
 .brand{display:inline-flex;align-items:center;gap:9px;font-weight:800;letter-spacing:-.02em;font-size:18px;text-decoration:none;color:var(--ink);
   padding:8px 14px 8px 10px;border-radius:999px;background:rgba(255,255,255,.72);border:1px solid rgba(255,255,255,.8);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);box-shadow:0 8px 24px -14px rgba(14,27,44,.35)}
 .brand svg{width:28px;height:28px;position:relative;top:-2px}
-.foot{position:relative;z-index:1;margin:0;padding:0 16px 18px;text-align:center;color:rgba(14,27,44,.62);font:500 11.5px/1.4 var(--f-mono);letter-spacing:.02em}
 
 /* the card floats over the street and pops in */
 .stage{position:relative;z-index:1;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:calc(100vh - 40px);min-height:calc(100dvh - 40px);padding:96px 20px 28px}

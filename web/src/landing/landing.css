@@ -120,11 +120,7 @@ h1 span{color:var(--green)}
 .chapter .card p{font-size:13.5px;line-height:1.5}
 .chapter .card .eyebrow{font-size:10.5px;padding:5px 9px;gap:6px}
 .chapter .card .eyebrow i{width:6px;height:6px}
-.chapter .card .facts{gap:5px;margin-top:10px}
-.chapter .card .fact{font-size:10.5px;padding:5px 7px;border-radius:6px}
 .card p{margin:0;color:#34465C;max-width:60ch}
-.facts{display:flex;flex-wrap:wrap;gap:8px;margin-top:18px}
-.fact{font:500 12px/1 var(--f-mono);padding:8px 10px;border-radius:8px;background:rgba(255,255,255,.72);border:1px solid var(--line);color:var(--ink)}
 
 /* closing: stakeholders + CTA */
 .closing{position:relative;z-index:2;min-height:100vh;min-height:100svh;display:flex;align-items:center;padding-block:calc(86px + env(safe-area-inset-top,0px)) calc(16px + env(safe-area-inset-bottom,0px));padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
@@ -255,7 +251,6 @@ h1 span{color:var(--green)}
   .chapter .card{top:calc(76px + env(safe-area-inset-top,0px));left:max(16px,env(safe-area-inset-left,0px));right:max(16px,env(safe-area-inset-right,0px));width:auto;max-width:560px;padding:18px 20px;border-radius:20px}
   .card h2{font-size:clamp(21px,5.4vw,26px);margin:12px 0 8px}
   .chapter .card p{font-size:14.5px;line-height:1.5}
-  .facts{margin-top:12px}
   .hud{top:auto;bottom:calc(14px + env(safe-area-inset-bottom,0px));right:max(16px,env(safe-area-inset-right,0px));left:max(16px,env(safe-area-inset-left,0px));width:auto;max-width:560px;transform:none}
   .hud .panel{inset:auto 0 0 0;padding:14px 16px;border-radius:18px}
   .hud .ph{margin-bottom:8px}
@@ -271,7 +266,7 @@ h1 span{color:var(--green)}
   .rail a::after{display:none}
   .who{grid-template-columns:minmax(0,1fr)}
 }
-@media (max-width:520px){ .facts{display:none} .hero h1{font-size:40px} }
+@media (max-width:520px){ .hero h1{font-size:40px} }
 @media (prefers-reduced-motion:reduce){#scene{transform:none}.reveal-ready .closing .wrap>*,.reveal-ready .closing .who article{opacity:1;transform:none;transition:none}.navbar,.nav-mini .navbar,.rail a,.nav-mini .rail a{transition:none!important}.chapter .card,.chapter .card.on{transition:none;filter:none;transform:none}.scroll-cue i::after{animation:none}.panel,.reg,.btn,.dots button,.match,.note,.veil{transition:none}}
 
 /* live on-chain strip (closing section) */

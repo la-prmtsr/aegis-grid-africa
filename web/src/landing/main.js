@@ -8,16 +8,31 @@ startScene();
 showLiveStats();
 signedInLinks();
 
-/** Signed in already: the sign up / log in buttons become "Open dashboard". */
+/**
+ * Signed out: Log in / Sign up everywhere. Signed in: the navbar shows "Log out" where "Log in" was and
+ * "Dashboard" where "Sign up" was (same places, so the bar keeps its layout); the hero's "Get started" and the
+ * closing "Log in" are hidden so "Open dashboard" is not repeated; the closing "Create your account" and the side
+ * rail open the dashboard.
+ */
 function signedInLinks() {
   let s = null;
   try { s = JSON.parse(localStorage.getItem('aegis.session') || 'null'); } catch { /* storage blocked */ }
   if (!s || s.method === 'guest') return; // old guest sessions are not signed in
   document.querySelectorAll('[data-auth]').forEach((a) => {
     const k = a.dataset.auth;
-    if (k === 'login') { a.hidden = true; return; }
+    if (k === 'hide') { a.hidden = true; return; }
+    if (k === 'logout') {
+      a.textContent = 'Log out';
+      a.href = './index.html';
+      a.addEventListener('click', (e) => {
+        e.preventDefault();
+        try { localStorage.removeItem('aegis.session'); } catch { /* storage blocked */ }
+        location.reload();
+      });
+      return;
+    }
     a.href = './console.html';
-    if (k === 'rail') { a.dataset.tip = 'Open dashboard'; a.setAttribute('aria-label', 'Open dashboard'); } else a.textContent = 'Open dashboard';
+    if (k === 'rail') { a.dataset.tip = 'Open dashboard'; a.setAttribute('aria-label', 'Open dashboard'); } else a.textContent = a.closest('nav') ? 'Dashboard' : 'Open dashboard'; // short in the navbar so it fits on phones
   });
 }
 
