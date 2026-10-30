@@ -48,6 +48,7 @@ const S = {
   lastResult: null,
   notice: null,
   meterBSeen: 0, // last raw METER_B firmware telemetry (Stage 5B.2)
+  meterBTamper: null, // Stage 6.1: tamper flag in METER_B firmware telemetry (null until seen)
   lastTradeEnd: 0, // the firmware may still report the buyer request for a moment after STOP
   fwBusy: false, // Stage 5B: METER_A still runs a trade this backend does not track (left from a restart)
   orphanStopAt: 0,
@@ -101,7 +102,14 @@ const { publish } = connect('relayer', subs, async (topic, msg) => {
     return evaluate();
   }
   if (topic === topics.telemetry('METER_B')) {
-    if (msg.v !== 2) S.meterBSeen = Date.now(); // v2 = our dashboard view; anything else = METER_B firmware
+    if (msg.v === 2) return undefined; // v2 = our dashboard view; anything else = METER_B firmware
+    S.meterBSeen = Date.now();
+    // Stage 6.1: the firmware's own tamper flag (dashboard switch or the Wokwi slide switch) is the truth for the tile
+    if (typeof msg.tamper === 'boolean' && msg.tamper !== S.meterBTamper) {
+      S.meterBTamper = msg.tamper;
+      log(`METER_B firmware reports tamper ${msg.tamper ? 'ON' : 'off'}`);
+      await publishStatus();
+    }
     return undefined;
   }
   if (topic === topics.appRequest && typeof msg.requesting === 'boolean') {
@@ -332,18 +340,44 @@ async function onFinal(topic, topicMeterId, payload) {
 
 async function verify5b(rec) {
   clearTimeout(rec.timer);
+  const maxWh = rec.maxWh ?? Number(TRADE.maxWh);
   const r = verifyPair(rec.finals.seller, rec.finals.buyer, {
     toleranceBps: SIM.toleranceBps,
     minSettleWh: TESTNET ? STAGE5B.minSettleWh : 0,
-    maxWh: rec.maxWh ?? Number(TRADE.maxWh),
+    maxWh,
     minSocBps: c.minSocBps,
     integer: TESTNET,
   });
   rec.verify = r;
-  if (!r.ok) return close5b(rec, T.REJECTED, { reason: `${r.stage} check: ${r.reason}` });
+  if (!r.ok) {
+    if (TESTNET && isDisagreement(rec, r, maxWh)) {
+      // Stage 6.1 tamper: the meters disagree by more than 3% on their exact readings. On testnet both signed readings
+      // still go to the contract, which freezes the deposit as Disputed (only the arbiter can release it). Rejecting
+      // here instead would refund the full deposit after expiry, which rewards the side that tampered.
+      const { seller, buyer } = rec.finals;
+      rec.verify = { ...r, int: { sellerWh: toContractWh(seller.wh), buyerWh: toContractWh(buyer.wh) } };
+      return requestSignatures(rec, `${r.stage} check: ${r.reason}: both signed readings go to the contract, which freezes the deposit`);
+    }
+    return close5b(rec, T.REJECTED, { reason: `${r.stage} check: ${r.reason}` });
+  }
   if (!TESTNET) return close5b(rec, T.SIMULATION_VERIFIED, { reason: `${r.reason}; SETTLEMENT_MODE=off, nothing sent on-chain` });
+  return requestSignatures(rec, `${r.reason}: asking both gateways to sign`);
+}
 
-  setStatus(rec, T.SIGNING, { reason: `${r.reason}: asking both gateways to sign` });
+/**
+ * The readings disagree beyond the tolerance on their exact values (a tampered or faulty meter), and are otherwise
+ * valid evidence the contract can judge: enough energy, whole-Wh values inside the escrow, battery above the reserve.
+ * A gap that only appears after rounding to whole Wh is not a disagreement (that trade is rejected and refunded).
+ */
+function isDisagreement(rec, r, maxWh) {
+  const { seller, buyer } = rec.finals;
+  return r.stage === 'fraction' && /^gap /.test(r.reason)
+    && seller.wh >= STAGE5B.minSettleWh && toContractWh(buyer.wh) >= 1 && toContractWh(seller.wh) <= maxWh
+    && seller.socBpsAfter >= c.minSocBps;
+}
+
+async function requestSignatures(rec, reason) {
+  setStatus(rec, T.SIGNING, { reason });
   await publishStatus();
   await command(topics.cmd('METER_A'), { cmd: 'sign', tradeId: rec.id });
   await command(topics.cmd('METER_B'), { cmd: 'sign', tradeId: rec.id });
@@ -557,6 +591,7 @@ async function publishStatus() {
     wokwiControl: Object.fromEntries(Object.entries(WOKWI_CONTROL).map(([k, v]) => [k, Boolean(v.topic)])),
     stage5b: { evidence: STAGE5B.evidence, settlementMode: STAGE5B.settlementMode, label: TESTNET ? LABEL_TESTNET : null, minSettleWh: STAGE5B.minSettleWh, targetW: STAGE5B.targetW, meterBFirmwareSeen: S.meterBSeen || null },
     controls: { tamper: tamperAvailable },
+    meterB: { seen: S.meterBSeen || null, tamper: S.meterBTamper },
     trades: FIVE_B ? recent() : [],
     params: { timeScale: SIM.timeScale, lineLoss: SIM.lineLoss, minSocPct: c.minSocBps / 100, toleranceBps: SIM.toleranceBps, maxWh: Number(TRADE.maxWh), maxOrderWh: Number(TRADE.maxWh), orderRate: ORDER_RATE },
   }, { retain: true });

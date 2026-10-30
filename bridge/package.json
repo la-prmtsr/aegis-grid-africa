@@ -14,6 +14,7 @@
     "v2:meter-b": "node src/v2/meter-b.js",
     "v2:relayer": "node src/v2/relayer.js",
     "v2:mock-wokwi": "node src/v2/mock-wokwi.js",
+    "v2:tamper-check": "node src/v2/tamper-check.js",
     "adapter": "node src/aegis-unity/listen.mjs",
     "test": "node --test test/*.test.mjs",
     "listen": "node src/listen.js",

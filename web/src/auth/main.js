@@ -1,13 +1,15 @@
 // Sign up, log in and "what do you need today?" for the Aegis-Grid prototype.
-// Routes: #signup, #login, #created, #role. Accounts are kept in this browser (see lib/session.js).
+// Routes: #signup, #login, #created, #role (users) and #operator (operator team, demo account).
+// Accounts are kept in this browser (see lib/session.js).
 import { ethers } from 'ethers';
-import { ACCOUNTS, CHAIN } from '../lib/config.js';
+import { ACCOUNTS, CHAIN, OPERATOR_HASH } from '../lib/config.js';
 import { esc, short } from '../lib/format.js';
 import {
-  normalizePhone, prettyPhone, maskPhone, findAccount, createAccount, checkPassword, momoAccount,
+  normalizePhone, splitPhone, maskPhone, findAccount, createAccount, checkPassword, momoAccount,
   getSession, setSession, updateSession, clearSession, initials, METHOD_LABEL,
 } from '../lib/session.js';
-import { KNOWN, discover, providerFor, others } from '../lib/wallets.js';
+import { KNOWN, discover, providerFor, others, iconFor } from '../lib/wallets.js';
+import { COUNTRIES, DEFAULT_COUNTRY, countryByIso } from '../lib/countries.js';
 
 const $ = (id) => document.getElementById(id);
 const view = $('view');
@@ -15,16 +17,50 @@ const sheet = $('sheet'), sheetBody = $('sheetBody');
 const AREAS = ['Madina', 'Adenta', 'East Legon', 'Spintex', 'Teshie', 'Nungua', 'Dansoman', 'Kaneshie', 'Achimota', 'Dome', 'Lapaz', 'Osu', 'Labadi', 'Tema Community 25', 'Kasoa'];
 
 const EYE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg>';
-const MM_ICON = '<svg viewBox="0 0 32 32" aria-hidden="true"><path d="M27 4 17.5 11l1.8-4.2L27 4Z" fill="#E2761B"/><path d="m5 4 9.4 7.1-1.7-4.3L5 4Zm18.6 16.4-2.5 3.9 5.4 1.5 1.6-5.3-4.5-.1Zm-20.1.1 1.5 5.3 5.4-1.5-2.5-3.9-4.4.1Z" fill="#E4761B"/><path d="m9.5 13.9-1.5 2.3 5.4.2-.2-5.8-3.7 3.3Zm13 0-3.8-3.4-.1 5.9 5.4-.2-1.5-2.3ZM9.9 24.3l3.2-1.6-2.8-2.2-.4 3.8Zm8.9-1.6 3.3 1.6-.5-3.8-2.8 2.2Z" fill="#E4761B"/><path d="m22 24.3-3.2-1.6.3 2.1v.9l2.9-1.4Zm-12.1 0 3 1.4v-.9l.2-2.1-3.2 1.6Z" fill="#D7C1B3"/><path d="m13 19.2-2.7-.8 1.9-.9.8 1.7Zm6 0 .8-1.7 1.9.9-2.7.8Z" fill="#233447"/><path d="m9.9 24.3.5-3.9-3 .1 2.5 3.8Zm11.7-3.9.5 3.9 2.5-3.8-3-.1Zm2.3-4.2-5.4.2.5 2.8.8-1.7 1.9.9 2.2-2.2Zm-13.6 2.2 1.9-.9.8 1.7.5-2.8-5.4-.2 2.2 2.2Z" fill="#CD6116"/></svg>';
-const CB_ICON = '<svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="#0052FF"/><circle cx="16" cy="16" r="9" fill="#fff"/><rect x="12.5" y="12.5" width="7" height="7" rx="1.2" fill="#0052FF"/></svg>';
+// Wallet icons: the wallet's own icon when it announces itself (EIP-6963, supplied by the installed wallet);
+// otherwise a plain letter tile. We do not redraw wallet logos ourselves.
+const letterTile = (ch, bg) => `<span class="ltile" style="background:${bg}">${ch}</span>`;
+// Not installed: the official logo file from the wallet's brand kit if the team put it in public/wallets/
+// (metamask.png, coinbase.svg), else the letter tile.
+const walletIcon = (rdns, ch, bg, file) => {
+  const src = iconFor(rdns);
+  if (src) return `<img src="${esc(src)}" alt="">`;
+  return `<img src="./wallets/${file}" alt="" onerror="this.outerHTML=this.nextElementSibling.innerHTML"><template>${letterTile(ch, bg)}</template>`;
+};
 
 // ------------------------------------------------------------------ helpers
-let pendingPhone = '';
+let pendingPhone = ''; // +E.164 number carried between the forms
 let otp = null; // simulated one-time code
 let walletBusy = false;
 
 const field = (id, label, input, hint = '') => `<label class="field" for="${id}"><span>${label}</span>${input}${hint ? `<small id="${id}-hint">${hint}</small>` : ''}<em class="err" id="${id}-err"></em></label>`;
-const phoneInput = (id, value = '') => `<div class="phone"><span class="cc">🇬🇭 +233</span><input id="${id}" name="${id}" type="tel" inputmode="tel" autocomplete="tel-national" placeholder="24 123 4567" value="${esc(value)}" required></div>`;
+const CHEVRON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>';
+function savedCountry() { try { return localStorage.getItem('aegis.cc') || DEFAULT_COUNTRY; } catch { return DEFAULT_COUNTRY; } }
+/** Phone field with a country code picker (lib/countries.js); `e164` prefills both parts. */
+function phoneInput(id, e164 = '') {
+  const { iso, national } = e164 ? splitPhone(e164) : { iso: savedCountry(), national: '' };
+  const c = countryByIso(iso);
+  const opts = COUNTRIES.map((x) => `<option value="${x.iso}" ${x.iso === c.iso ? 'selected' : ''}>${esc(x.name)} (+${x.dial})</option>`).join('');
+  return `<div class="phone"><label class="cc" title="Country code"><b>${c.iso}</b>+${c.dial}${CHEVRON}<select id="${id}-cc" aria-label="Country code" data-phone="${id}">${opts}</select></label><input id="${id}" name="${id}" type="tel" inputmode="tel" autocomplete="tel-national" placeholder="${esc(c.eg)}" value="${esc(national)}" required></div>`;
+}
+/** +E.164 from a phone field and its country picker, or null. */
+const readPhone = (id) => normalizePhone($(id)?.value, $(`${id}-cc`)?.value || DEFAULT_COUNTRY);
+/** "Enter a valid Ghana number: 9 digits after +233." */
+function phoneError(id) {
+  const c = countryByIso($(`${id}-cc`)?.value);
+  const n = c.len[0] === c.len[1] ? `${c.len[0]}` : `${c.len[0]}–${c.len[1]}`;
+  return `Enter a valid ${c.name} number: ${n} digits after +${c.dial}, e.g. ${c.eg}.`;
+}
+document.addEventListener('change', (e) => {
+  const sel = e.target.closest?.('select[data-phone]');
+  if (!sel) return;
+  const c = countryByIso(sel.value);
+  sel.parentElement.firstChild.textContent = c.iso; // <b>
+  sel.parentElement.childNodes[1].textContent = `+${c.dial}`;
+  const input = $(sel.dataset.phone);
+  if (input) { input.placeholder = c.eg; input.focus(); }
+  try { localStorage.setItem('aegis.cc', c.iso); } catch { /* private mode */ }
+});
 const passInput = (id, ac) => `<div class="pass"><input id="${id}" name="${id}" type="password" autocomplete="${ac}" minlength="8" required><button type="button" class="eye" data-act="eye" data-for="${id}" aria-label="Show password">${EYE}</button></div>`;
 function setErr(id, msg) { const e = $(`${id}-err`); if (e) e.textContent = msg || ''; const i = $(id); if (i) i.setAttribute('aria-invalid', msg ? 'true' : 'false'); }
 function clearErrs(form) { form.querySelectorAll('.err').forEach((e) => { e.textContent = ''; }); form.querySelectorAll('[aria-invalid]').forEach((i) => i.setAttribute('aria-invalid', 'false')); }
@@ -38,8 +74,17 @@ function signedInNote() {
 }
 
 // ------------------------------------------------------------------ views
+const USER_ICO = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>';
+const OPS_ICO = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2 4 5v6c0 5.5 3.4 9.7 8 11 4.6-1.3 8-5.5 8-11V5l-8-3Z"/><path d="m9 12 2 2 4-4"/></svg>';
+/** Who is signing in: households and shops (sign up / log in), or the operator team (fixed demo account). */
+const audienceTabs = (active) => `<nav class="aud" aria-label="Sign in as">
+    <a href="#login" class="${active === 'user' ? 'on' : ''}" ${active === 'user' ? 'aria-current="page"' : ''}>${USER_ICO}User</a>
+    <a href="#operator" class="${active === 'ops' ? 'on' : ''}" ${active === 'ops' ? 'aria-current="page"' : ''}>${OPS_ICO}Operator</a>
+  </nav>`;
+
 function signupView() {
   return `
+  ${audienceTabs('user')}
   ${signedInNote()}
   <h1>Create your account</h1>
   <p class="sub">Takes a minute. We create your Aegis wallet for you, no crypto knowledge needed.</p>
@@ -60,6 +105,7 @@ function signupView() {
 
 function loginView() {
   return `
+  ${audienceTabs('user')}
   ${signedInNote()}
   <h1>Welcome back</h1>
   <p class="sub">Log in with your phone number, MoMo or a crypto wallet.</p>
@@ -73,9 +119,8 @@ function loginView() {
   <div class="or"><span>or</span></div>
   <button type="button" class="btn btn-line wide" data-act="wallets">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 7V5a2 2 0 0 0-2-2H5a2 2 0 0 0 0 4h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5"/><circle cx="16.5" cy="13.5" r="1.5"/></svg>
-    Connect a wallet <span class="mini" aria-hidden="true"><span class="mdot">M</span>${MM_ICON}${CB_ICON}</span></button>
-  <p class="switch">New here? <a href="#signup">Create an account</a></p>
-  <p class="switch small"><button type="button" class="link" data-act="guest">Just looking? Explore the demo street as a guest</button></p>`;
+    Connect a wallet</button>
+  <p class="switch">New here? <a href="#signup">Create an account</a></p>`;
 }
 
 function createdView() {
@@ -101,6 +146,7 @@ function createdView() {
 function roleView() {
   const s = getSession();
   if (!s) return loginView();
+  if (s.method === 'operator') { location.replace('./console.html#o-overview'); return ''; }
   const suggested = s.role || (same(s.address, ACCOUNTS.seller.address) ? 'seller' : 'buyer');
   return `
   <h1>Hi ${esc(firstName(s.name))}, what brings you here?</h1>
@@ -117,17 +163,33 @@ function roleView() {
       <span class="rgo" aria-hidden="true">→</span>
     </button>
   </div>
-  <p class="switch small"><button type="button" class="link" data-act="role" data-role="ops">Operator view (demo team)</button></p>`;
+`;
+}
+
+/** Operator team: no sign up, one fixed team account (credentials kept by the team, only their hash is in the code). */
+function operatorView() {
+  return `
+  ${audienceTabs('ops')}
+  <h1>Operator sign-in</h1>
+  <p class="sub">For the Aegis operations team: the street microgrid, the dual-meter oracle, mobile money and the escrow.</p>
+  <form id="opsForm" novalidate>
+    ${field('ouser', 'Username', '<input id="ouser" name="ouser" autocomplete="username" autocapitalize="off" spellcheck="false" placeholder="Operator username" required>')}
+    ${field('opw', 'Password', `<div class="pass"><input id="opw" name="opw" type="password" autocomplete="current-password" placeholder="Password" required><button type="button" class="eye" data-act="eye" data-for="opw" aria-label="Show password">${EYE}</button></div>`)}
+    <button class="btn btn-dark wide" type="submit">Log in as operator</button>
+  </form>
+  <p class="fine">Operator accounts are issued by the Aegis team; there is no sign-up. Households and shops use the User tab.</p>`;
 }
 
 const same = (a, b) => !!a && !!b && a.toLowerCase() === b.toLowerCase();
 
+let routed = false; // first render pops in (CSS), later route changes do a small swap
 function route() {
   const h = (location.hash || '#signup').slice(1);
-  const views = { signup: signupView, login: loginView, created: createdView, role: roleView };
+  const views = { signup: signupView, login: loginView, created: createdView, role: roleView, operator: operatorView };
   view.innerHTML = (views[h] || signupView)();
   view.dataset.view = views[h] ? h : 'signup';
-  document.title = `Aegis-Grid · ${{ signup: 'Create account', login: 'Log in', created: 'Welcome', role: 'Get started' }[view.dataset.view]}`;
+  view.classList.remove('swap'); void view.offsetWidth; if (routed) view.classList.add('swap'); routed = true;
+  document.title = `Aegis-Grid · ${{ signup: 'Create account', login: 'Log in', created: 'Welcome', role: 'Get started', operator: 'Operator sign-in' }[view.dataset.view]}`;
   view.querySelector('h1')?.focus?.();
   window.scrollTo({ top: 0 });
 }
@@ -140,15 +202,16 @@ view.addEventListener('submit', async (e) => {
   clearErrs(f);
   if (f.id === 'signupForm') return signup(f);
   if (f.id === 'loginForm') return login(f);
+  if (f.id === 'opsForm') return operatorLogin(f);
   return undefined;
 });
 
 async function signup(f) {
   const name = f.name.value.trim(), area = f.area.value.trim(), pw = f.pw.value, pw2 = f.pw2.value;
-  const phone = normalizePhone(f.phone.value);
+  const phone = readPhone('phone');
   let bad = false;
   if (name.length < 2) { setErr('name', 'Enter your name.'); bad = true; }
-  if (!phone) { setErr('phone', 'Enter a Ghana number, e.g. 24 123 4567.'); bad = true; }
+  if (!phone) { setErr('phone', phoneError('phone')); bad = true; }
   if (!area) { setErr('area', 'Choose your neighbourhood.'); bad = true; }
   if (pw.length < 8) { setErr('pw', 'Use at least 8 characters.'); bad = true; }
   if (pw2 !== pw) { setErr('pw2', 'The two passwords are different.'); bad = true; }
@@ -167,7 +230,7 @@ async function signup(f) {
 }
 
 function showExists(phone) {
-  pendingPhone = prettyPhone(phone).replace('+233 ', '');
+  pendingPhone = phone;
   const box = $('exists');
   box.hidden = false;
   box.innerHTML = `<b>This number already has an account.</b> <a href="#login">Log in instead →</a>`;
@@ -185,13 +248,13 @@ function progress(p) { const b = $('bar'); if (b) b.style.width = `${Math.max(4,
 
 // ------------------------------------------------------------------ log in
 async function login(f) {
-  const phone = normalizePhone(f.lphone.value), pw = f.lpw.value;
+  const phone = readPhone('lphone'), pw = f.lpw.value;
   const msg = $('lmsg'); msg.hidden = true;
-  if (!phone) { setErr('lphone', 'Enter a Ghana number, e.g. 24 123 4567.'); return; }
+  if (!phone) { setErr('lphone', phoneError('lphone')); return; }
   if (!pw) { setErr('lpw', 'Enter your password.'); return; }
   const acc = findAccount(phone);
   if (!acc) {
-    pendingPhone = prettyPhone(phone).replace('+233 ', '');
+    pendingPhone = phone;
     msg.hidden = false;
     msg.innerHTML = `<b>No account for this number on this device.</b> <a href="#signup">Create one →</a>`;
     return;
@@ -211,6 +274,22 @@ async function login(f) {
     setErr('lpw', err.message);
     f.lpw.focus();
   }
+}
+
+// ------------------------------------------------------------------ operator
+function operatorLogin(f) {
+  const user = f.ouser.value.trim().toLowerCase(), pw = f.opw.value;
+  if (!user) { setErr('ouser', 'Enter the operator username.'); f.ouser.focus(); return; }
+  if (!pw) { setErr('opw', 'Enter the password.'); f.opw.focus(); return; }
+  const hash = ethers.sha256(ethers.toUtf8Bytes(`${user}:${pw}`)).slice(2);
+  if (hash !== OPERATOR_HASH) {
+    setErr('opw', 'Wrong username or password.');
+    f.opw.select();
+    return;
+  }
+  setSession({ name: 'Aegis Operator', method: 'operator', role: 'ops' });
+  try { localStorage.setItem('aegis.persona', 'ops'); } catch { /* private mode */ }
+  location.href = './console.html#o-overview';
 }
 
 // ------------------------------------------------------------------ sheet: wallets + MoMo
@@ -239,8 +318,8 @@ async function walletList() {
     <p class="sh-sub">Choose how you want to sign in.</p>
     <div class="opts">
       ${opt('momo-start', '<span class="mdot big">M</span>', 'MoMo', 'Mobile money · recommended in Ghana', '<span class="tag sim">Simulated</span>')}
-      ${opt('wallet', MM_ICON, 'MetaMask', 'Browser extension or app', tag(mm), `data-rdns="${KNOWN.metamask.rdns}" data-name="MetaMask"`)}
-      ${opt('wallet', CB_ICON, 'Coinbase Wallet', 'Browser extension or app', tag(cb), `data-rdns="${KNOWN.coinbase.rdns}" data-name="Coinbase Wallet"`)}
+      ${opt('wallet', walletIcon(KNOWN.metamask.rdns, 'M', '#E8831D', 'metamask.png'), 'MetaMask', 'Browser extension or app', tag(mm), `data-rdns="${KNOWN.metamask.rdns}" data-name="MetaMask"`)}
+      ${opt('wallet', walletIcon(KNOWN.coinbase.rdns, 'C', '#1652F0', 'coinbase.svg'), 'Coinbase Wallet', 'Browser extension or app', tag(cb), `data-rdns="${KNOWN.coinbase.rdns}" data-name="Coinbase Wallet"`)}
       ${more}
     </div>
     <p class="sh-fine">Crypto wallets use the Base Sepolia test network. Use a testnet account only.</p>`;
@@ -320,8 +399,8 @@ sheetBody.addEventListener('submit', (e) => {
   const f = e.target;
   clearErrs(f);
   if (f.id === 'momoPhoneForm') {
-    const phone = normalizePhone(f.mphone.value);
-    if (!phone) return setErr('mphone', 'Enter a Ghana number, e.g. 24 123 4567.');
+    const phone = readPhone('mphone');
+    if (!phone) return setErr('mphone', phoneError('mphone'));
     pendingPhone = phone;
     return momoOtp();
   }
@@ -359,16 +438,13 @@ document.addEventListener('click', (e) => {
   } else if (act === 'wallets') walletList();
   else if (act === 'wallet') connectBrowserWallet(b.dataset.rdns, b.dataset.name);
   else if (act === 'momo-start') {
-    const typed = view.querySelector('#phone, #lphone')?.value || '';
-    const pre = b.dataset.phone || (typed ? normalizePhone(typed) : '') || '';
-    momoPhone(pre ? pre.replace('+233', '') : '');
+    const typedId = view.querySelector('#phone, #lphone')?.id;
+    const pre = b.dataset.phone || (typedId ? readPhone(typedId) : '') || '';
+    momoPhone(pre || '');
   } else if (act === 'sheet-close') closeSheet();
   else if (act === 'to-role') go('#role');
   else if (act === 'copy') { navigator.clipboard?.writeText(b.dataset.v).then(() => { b.textContent = 'Copied'; }, () => {}); }
-  else if (act === 'guest') {
-    setSession({ name: 'Guest', method: 'guest' });
-    go('#role');
-  } else if (act === 'logout') { clearSession(); route(); }
+  else if (act === 'logout') { clearSession(); route(); }
   else if (act === 'role') {
     const role = b.dataset.role;
     updateSession({ role });
@@ -380,5 +456,14 @@ document.addEventListener('click', (e) => {
   }
 });
 addEventListener('keydown', (e) => { if (e.key === 'Escape' && !sheet.hidden) closeSheet(); });
+
+// background parallax: the street moves a few pixels against the pointer
+const move = document.querySelector('.scene-move');
+if (move && !matchMedia('(prefers-reduced-motion: reduce)').matches && matchMedia('(pointer: fine)').matches) {
+  addEventListener('pointermove', (e) => {
+    const x = (e.clientX / innerWidth - 0.5) * -22, y = (e.clientY / innerHeight - 0.5) * -14;
+    move.style.setProperty('--px', `${x.toFixed(1)}px`); move.style.setProperty('--py', `${y.toFixed(1)}px`);
+  }, { passive: true });
+}
 
 route();

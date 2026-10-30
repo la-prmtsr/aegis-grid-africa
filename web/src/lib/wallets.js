@@ -39,6 +39,9 @@ export function providerFor(rdns) {
   return eth;
 }
 
+/** The icon a wallet announced for itself (EIP-6963 data URI), or null if it has not announced. */
+export const iconFor = (rdns) => found.get(rdns)?.info?.icon || null;
+
 export function isInstalled(rdns) {
   return !!providerFor(rdns);
 }

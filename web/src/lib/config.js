@@ -64,3 +64,9 @@ export const MOMO = {
 
 export const txUrl = (hash) => `${CHAIN.explorer}/tx/${hash}`;
 export const addrUrl = (addr) => `${CHAIN.explorer}/address/${addr}`;
+
+// Operator sign-in (auth.html#operator): one fixed account for the Aegis team, no sign up. Only a SHA-256 hash of
+// "username:password" is in the code, never the credentials themselves; the team keeps them privately.
+// New credentials: `npm run operator-hash -- <username> <password>` and put the result in VITE_OPERATOR_HASH.
+// PROTOTYPE: the check runs in the browser, so this hides the operator console, it is not server-side access control.
+export const OPERATOR_HASH = (env.VITE_OPERATOR_HASH || 'a7e82857d7bfc71de87972023f59930963e975b95ee6dddb5f972ad4ba321dbd').toLowerCase();

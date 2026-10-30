@@ -121,20 +121,24 @@ const tile = (act, icon, label, stateTxt, on, tone, disabled, hint) =>
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[icon]}</svg>
     <b>${label}</b><small>${stateTxt}</small></button>`;
 
+/** Tamper switch state: METER_B firmware telemetry when the backend has seen it (Stage 6.1), else the backend's Meter B view. */
+export const tamperState = () => Boolean(state.backend?.meterB?.tamper ?? state.buyer?.tamper);
+
 export function ctlToggles() {
   const m = metrics();
   const b = state.buyer;
   const be = state.backend;
   const requesting = Boolean(b?.requesting || be?.requests?.app);
   const tradeId = Number(b?.tradeId || be?.active?.id || 0);
+  const tamperOn = tamperState();
   const none = !m;
   return `<div class="cr-label">Scenario</div><div class="cr-tiles">
     ${tile('t-outage', 'outage', 'Utility outage', m?.outage ? 'Islanded' : 'Off', !!m?.outage, 'red', none, 'Opens the PCC: the street runs on the battery only')}
     ${tile('t-request', 'request', 'Buyer request', requesting ? (tradeId ? `Trade #${tradeId}` : 'Opening…') : 'Off', requesting, 'blue', none, 'UMKM B requests its order (Wh): the backend opens a trade on-chain and stops it at the order')}
     ${tile('t-backup', 'backup', 'Emergency backup', m?.backup ? 'On' : 'Off', !!m?.backup, 'green', none, 'Resident A lets the battery also feed the community loads')}
     ${be?.controls?.tamper === false
-      ? tile('t-tamper', 'tamper', 'Tamper Meter B', 'In Wokwi', false, 'amber', true, 'Stage 5B: METER_B runs as Faras’s ESP32 in Wokwi. Set WOKWI_CTRL_TAMPER_* in .env to switch its tamper from here; the backend never alters a meter value.')
-      : tile('t-tamper', 'tamper', 'Tamper Meter B', b?.tamper ? '−40%' : 'Off', !!b?.tamper, 'amber', !b, 'Meter B under-reports by 40%: the backend rejects the trade')}
+      ? tile('t-tamper', 'tamper', 'Tamper Meter B', 'In Wokwi', false, 'amber', true, 'Not configured: add WOKWI_CTRL_TAMPER_TOPIC=meter_b_tamper, WOKWI_CTRL_TAMPER_ON=1 and WOKWI_CTRL_TAMPER_OFF=0 to .env and restart the backend. METER_B runs in Faras’s Wokwi; the backend never alters a meter value.')
+      : tile('t-tamper', 'tamper', 'Tamper Meter B', tamperOn ? '−40%' : 'Off', tamperOn, 'amber', !b && be?.meterB?.tamper == null, 'Meter B under-reports by 40%: the readings disagree, so the contract freezes the deposit (Disputed; Rejected when SETTLEMENT_MODE=off)')}
   </div>`;
 }
 

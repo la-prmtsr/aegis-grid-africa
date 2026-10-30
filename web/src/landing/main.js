@@ -12,10 +12,10 @@ signedInLinks();
 function signedInLinks() {
   let s = null;
   try { s = JSON.parse(localStorage.getItem('aegis.session') || 'null'); } catch { /* storage blocked */ }
-  if (!s || s.method === 'guest') return;
+  if (!s || s.method === 'guest') return; // old guest sessions are not signed in
   document.querySelectorAll('[data-auth]').forEach((a) => {
     const k = a.dataset.auth;
-    if (k === 'login' || k === 'guest') { a.hidden = true; return; }
+    if (k === 'login') { a.hidden = true; return; }
     a.href = './console.html';
     if (k === 'rail') { a.dataset.tip = 'Open dashboard'; a.setAttribute('aria-label', 'Open dashboard'); } else a.textContent = 'Open dashboard';
   });

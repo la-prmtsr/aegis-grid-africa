@@ -27,7 +27,7 @@ Trade statuses: `PENDING` → `ACTIVE` → `STOPPED` → `AWAITING_EVIDENCE` →
 
 **Controls from the dashboard** (formats recorded from Unity on Faras's broker, 29 Oct): every control is a plain payload under `demo/control/`: `mode` → `remote`, `grid_outage` → `1`/`0`, `emergency_backup` → `1`/`0`, `buyer_request` → `1`/`0`, `pv_w` and `load_w` → watts. Set them in `.env` (`WOKWI_MODE_REMOTE=remote`, `WOKWI_CTRL_OUTAGE_TOPIC=grid_outage`, `WOKWI_CTRL_OUTAGE_ON=1`, `WOKWI_CTRL_OUTAGE_OFF=0`, same pattern for `BACKUP`, `BUYER`, and `WOKWI_CTRL_PV_TOPIC=pv_w` / `WOKWI_CTRL_PV_VALUE={value}`, `WOKWI_CTRL_LOAD_TOPIC=load_w` / `WOKWI_CTRL_LOAD_VALUE={value}`).
 
-**Tamper** is a switch of the METER_B firmware: with `WOKWI_CTRL_TAMPER_TOPIC=meter_b_tamper` (`_ON=1`, `_OFF=0`) the dashboard tile publishes `demo/control/meter_b_tamper`, already covered by the bridge. METER_B then reports 60% of its value with `"tamper":true`. Without that setting the tile is disabled with the real firmware (it always works with the mock). A tampered trade fails the fractional check and is `REJECTED` before anything is sent on-chain.
+**Tamper** is a switch of the METER_B firmware: with `WOKWI_CTRL_TAMPER_TOPIC=meter_b_tamper` (`_ON=1`, `_OFF=0`) the dashboard tile publishes `demo/control/meter_b_tamper`, already covered by the bridge. METER_B then reports 60% of its value with `"tamper":true`. Without that setting the tile is disabled with the real firmware (it always works with the mock). What happens next, see "Stage 6.1: tamper" below.
 
 ## Who owns what
 
@@ -204,3 +204,54 @@ trade counter `p2p_trade_wh` runs, set with `FIRMWARE_ENERGY_SCALE` in `.env`:
   `backend/status` shows it as `active.stopAtWh`, the buyer card as "Stopping at … Wh".
 - In `wokwi-final` mode the "battery model runs at about Nx" line is information only: trades are billed from the
   firmware's counter, so it no longer says MISMATCH.
+
+## Stage 6.1: tamper (the buyer under-reports)
+
+The attack: the shop's meter (METER_B) reports less energy than it received, so the shop pays less. Aegis catches it
+because METER_A independently reports what it sent.
+
+**Flow.** Dashboard **Operator → Control room → Tamper Meter B** → backend publishes `demo/control/meter_b_tamper` `1`
+→ the Mosquitto bridge forwards it into Wokwi → METER_B multiplies what it counts by 0.6 and sets `"tamper": true` →
+the shop orders energy as usual → at STOP the finals disagree (for example 10.29 vs 6.05 Wh, gap 41%) →
+- `SETTLEMENT_MODE=testnet`: the gap is a real disagreement on the exact readings, so both gateways still sign their own
+  reading and the backend sends them to `settleTrade`. The **contract** sees 10 vs 6 Wh, beyond 3%, and freezes the
+  deposit as **Disputed** (TradeDisputed event, visible on Blockscout). Nobody is paid; only the arbiter can release it,
+  or the buyer is refunded after the 7-day dispute window. Rejecting it off-chain instead would give the shop its full
+  deposit back after expiry, which rewards tampering.
+- `SETTLEMENT_MODE=off`: `REJECTED` by the backend, nothing on-chain.
+
+A gap that only appears after rounding to whole Wh (an honest small trade, live trade 8) is not a disagreement: it is
+rejected and refunded, never disputed.
+
+**METER_B firmware (Faras, Wokwi), what it needs:**
+1. Subscribe to `aegis-grid/ag-sakarya26/demo/control/meter_b_tamper` (plain payload `1` / `0`), next to its other
+   subscriptions, and re-subscribe after a reconnect.
+2. Keep a `tamper` flag. While it is on, every energy step METER_B adds to its trade counter is multiplied by **0.6**
+   (it reports 40% less). The flag may change during a trade; only the steps after the change are affected.
+3. Put `"tamper": true|false` in **every** `meter/METER_B/telemetry` message and in the `meter/METER_B/final` event
+   (the final already has the field; today it is always false).
+4. Optional: a slide switch in the Wokwi diagram that toggles the same flag, and the LED or OLED shows "TAMPER".
+
+```cpp
+// METER_B sketch, PubSubClient (adapt names to the existing code)
+bool tamper = false;
+const float TAMPER_FACTOR = 0.6f;
+// in reconnect(): mqtt.subscribe("aegis-grid/ag-sakarya26/demo/control/meter_b_tamper");
+// in the MQTT callback:
+if (strcmp(topic, "aegis-grid/ag-sakarya26/demo/control/meter_b_tamper") == 0) {
+  tamper = length > 0 && payload[0] == '1';
+}
+// where METER_B adds energy to the trade counter:
+buyerWh += stepWh * (tamper ? TAMPER_FACTOR : 1.0f);
+// in the telemetry and final JSON: doc["tamper"] = tamper;
+```
+
+**Unity (Faras), optional:** read `"tamper"` from `meter/METER_B/telemetry` and show a red "METER B TAMPERED" marker on
+the shop. Unity does not send the tamper control: the dashboard is the single place for controls.
+
+**Check without a trade:** with Wokwi running, `cd bridge && npm run v2:tamper-check` sends `1` then `0` and reports
+whether METER_B telemetry follows (`PASS`), or what is missing. Then run one tampered order from the dashboard.
+
+Tested on the full local stack (GitHub main + mock + anvil + dashboard): tamper on, order 10 Wh → finals 10.29 vs
+6.05 Wh → both gateways signed 10 / 6 → `settleTrade` → **Disputed** on-chain; buyer receipt "Disputed · funds
+frozen", MoMo deposit "Held", Oracle and ledger in sync.

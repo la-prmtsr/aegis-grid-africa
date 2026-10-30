@@ -10,11 +10,16 @@ import { money, wh, watts, pct, gapPct, clock, simClock, impact, short, shortHas
 import { orderPickerHTML, requestCardHTML, openingCardHTML, liveSessionHTML, closingCardHTML, momoCheckoutHTML, buyerReceiptHTML } from './buyer-session.js';
 import { clampOrder, maxWhFor, receivedEstimate, orderSteps, DEFAULT_RATE } from '../lib/sizing.js';
 import { receiptHTML as tradeReceiptHTML, receiptNav, mountReceiptDrawer, chainButtonHTML } from './receipt.js';
-import { ctlHead, syncEngineSwitch, chooseEngine, ctlSliders, ctlToggles, ctlFoot, metricsHTML, quickHTML } from './control-room.js';
+import { ctlHead, syncEngineSwitch, chooseEngine, ctlSliders, ctlToggles, ctlFoot, metricsHTML, quickHTML, tamperState } from './control-room.js';
 
-const session = getSession() || { name: 'Guest', method: 'guest' };
-/** Greet the signed-in person; guests get a neutral greeting. */
-const greetName = () => (session.method === 'guest' ? 'there'
+// console.html already sends anyone without a session to the log in page; this is only a safety net.
+const session = getSession() || { name: '', method: 'none' };
+if (session.method === 'none') location.replace('./auth.html#login');
+// The operator console is for the operator sign-in only (auth.html#operator, demo account); users see Buyer and Seller.
+const isOperator = session.method === 'operator';
+if (!isOperator) document.querySelector('#persona option[value="ops"]')?.remove();
+/** Greet the signed-in person by first name (a wallet without a name gets a neutral greeting). */
+const greetName = () => (!session.name ? 'there'
   : session.method === 'wallet' && session.name.startsWith(session.walletName || '\u0000') ? 'there'
   : session.name.split(' ')[0]);
 
@@ -25,7 +30,7 @@ else useWallet(null);
 
 // ------------------------------------------------------------------ view state
 const ui = {
-  persona: localGet('aegis.persona', 'ama'),
+  persona: (() => { const p = localGet('aegis.persona', isOperator ? 'ops' : 'ama'); return p === 'ops' && !isOperator ? 'ama' : p; })(),
   mode: localGet('aegis.mode', 'buyer'),
   busy: null, // name of the wallet action in progress
   momo: null, // simulated MoMo checkout step: null | 'confirm' | 'prompt' | 'processing' | 'declined'
@@ -844,7 +849,7 @@ main.addEventListener('click', async (e) => {
       localSet('aegis.order', String(ui.targetWh));
       return render();
     }
-    case 't-tamper': return sim({ tamper: !b?.tamper }, !b?.tamper ? 'Buyer meter will under-report by 40%.' : 'Buyer meter honest again.');
+    case 't-tamper': { const on = !tamperState(); return sim({ tamper: on }, on ? 'Tamper on: METER_B will under-report by 40%.' : 'Tamper off: METER_B honest again.'); }
     case 't-backup': return sim({ backup: !s?.backupAllowed }, !s?.backupAllowed ? 'Emergency backup on: community loads may use the battery.' : 'Emergency backup off: the battery serves the shop only.');
     case 'engine-mock': chooseEngine('mock'); syncEngineSwitch(document.querySelectorAll('[data-engine]')); return sim({ engine: 'mock' }, 'Source: mock. The Wokwi-compatible mock publishes again.');
     case 'engine-wokwi': chooseEngine('wokwi'); syncEngineSwitch(document.querySelectorAll('[data-engine]')); return sim({ engine: 'wokwi' }, 'Mock paused. Waiting for telemetry from the real Wokwi…');
@@ -935,10 +940,12 @@ function renderAccount() {
       <div class="am-links"><button type="button" data-am="copy">Copy address</button><a href="${addrUrl(s.address)}" target="_blank" rel="noopener">View on explorer</a></div></div>`;
   }
   const area = s.area ? `<div class="am-row"><span>Neighbourhood</span><b>${esc(s.area)}</b></div>` : '';
-  const note = `<p class="am-note">You are looking at the demo street: the buyer's shop (meter B) and the seller's battery (meter A). Switch between Buyer, Seller and Operator in the top bar.</p>
+  const note = isOperator
+    ? `<p class="am-note">Operator demo account: the whole street, the oracle, mobile money and the escrow. You can also look at the Buyer and Seller pages from the top bar.</p>`
+    : `<p class="am-note">You are looking at the demo street: the buyer's shop (meter B) and the seller's battery (meter A). Switch between Buyer and Seller in the top bar. The operator console has its own sign-in.</p>
     <button type="button" class="am-item" data-am="onboard" role="menuitem">Register a new battery (onboarding)</button>`;
-  const items = s.method === 'guest'
-    ? `<a class="am-item" href="./auth.html#signup" role="menuitem">Create an account</a><a class="am-item" href="./auth.html#login" role="menuitem">Log in</a>`
+  const items = isOperator
+    ? `<button type="button" class="am-item danger" data-am="logout" role="menuitem">Log out</button>`
     : `<a class="am-item" href="./auth.html#role" role="menuitem">Change what I need</a><button type="button" class="am-item danger" data-am="logout" role="menuitem">Log out</button>`;
   acctMenu.innerHTML = head + wallet + area + note + items;
 }
@@ -952,7 +959,7 @@ acctMenu.addEventListener('click', (e) => {
   const b = e.target.closest('[data-am]');
   if (!b) return;
   if (b.dataset.am === 'copy') navigator.clipboard?.writeText(session.address).then(() => toast('Wallet address copied.'), () => {});
-  if (b.dataset.am === 'logout') { clearSession(); disconnectWallet(); location.href = './auth.html#login'; }
+  if (b.dataset.am === 'logout') { clearSession(); disconnectWallet(); location.href = isOperator ? './auth.html#operator' : './auth.html#login'; }
   if (b.dataset.am === 'onboard') { toggleMenu(false); ui.persona = 'ama'; ui.mode = 'seller'; save(); render(); }
 });
 document.addEventListener('click', (e) => { if (!acctMenu.hidden && !acctMenu.contains(e.target)) toggleMenu(false); });

@@ -160,9 +160,11 @@ function step() {
     const got = toBuyer * (1 - SIM.lineLoss) * realH * STAGE5B.energyScale;
     trade.buyerWh += tamper ? got * SIM.tamperFactor : got;
     if (inp.outage && trade.sellerWh > 0 && toBuyer < 1 && batteryWh <= minWh + 0.01) setImmediate(() => trade && finishTrade('soc_floor'));
-    // METER_B firmware telemetry (v1): the dashboard ignores it, the backend only notes that METER_B is alive
-    publish(topics.telemetry('METER_B'), { v: 1, site: SITE, meterId: 'METER_B', role: 'buyer', tradeId: trade.tradeId, importW: r1(toBuyer * (1 - SIM.lineLoss)), tradeWh: Math.round(trade.buyerWh * 1000) / 1000, simulated: true }, { qos: 0 });
   }
+  // METER_B firmware telemetry (v1), every second: the dashboard ignores it, the backend notes that METER_B is alive,
+  // and `npm run v2:tamper-check` reads its tamper flag.
+  const toBuyerNow = trade && inp.outage ? Math.min(buyerDemand, discharge) : 0;
+  publish(topics.telemetry('METER_B'), { v: 1, site: SITE, meterId: 'METER_B', role: 'buyer', tradeId: trade ? trade.tradeId : null, importW: r1(toBuyerNow * (1 - SIM.lineLoss)), tradeWh: trade ? Math.round(trade.buyerWh * 1000) / 1000 : 0, tamper, simulated: true }, { qos: 0 });
   // During a trade the energy to the buyer leaves the battery at the trade counter's speed (FIRMWARE_ENERGY_SCALE),
   // so the battery level and the billed Wh agree; everything else follows the 60x battery model.
   const buyerH = trade ? realH * STAGE5B.energyScale : dtH;

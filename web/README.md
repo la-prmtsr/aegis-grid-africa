@@ -70,14 +70,21 @@ Amounts on-chain are in gwei/ETH because the contract settles in test ETH.
 
 ## Sign up and log in (`auth.html`)
 
-The console opens only for a signed-in person; anyone else lands on the log in page. `console.html?guest` (the landing page's "Try the demo") opens it without an account.
+The console opens only for a signed-in person; anyone else lands on the log in page. There is no guest mode: everyone signs in as a user (account, MoMo or wallet) or as an operator.
 
 | Way in | What happens |
 |---|---|
 | **Create account** (name, MoMo number, neighbourhood, password) | A new wallet is created in the browser and stored **encrypted with the password** (Ethereum keystore, scrypt). The password is never stored: logging in works by decrypting the wallet. If the number already has an account, the page sends the person to log in. |
 | **Log in** (phone + password) | Unlocks that wallet. |
+| **Operator tab** (username + password) | For the team that runs the street: opens the operator console (control room, oracle, MoMo ledger, escrow). No sign up. Users never see the Operator persona. |
 | **Connect a wallet → MoMo** *(simulated)* | Phone number, a one-time code shown as a simulated SMS, then name and neighbourhood for a new number. Aegis creates the wallet for that number. |
 | **Connect a wallet → MetaMask / Coinbase Wallet** | Real browser wallets, told apart with EIP-6963. The console then signs transactions with the chosen wallet. The demo buyer and seller addresses are recognised. |
+
+Phone numbers take a country code (Ghana first, then Africa A–Z, then other countries; `src/lib/countries.js`) and are stored in international format (`+233241234567`, the leading 0 dropped). The length check is a sanity check per country, not full numbering-plan validation.
+
+**Wallet logos:** an installed wallet shows the icon it announces itself (EIP-6963). Otherwise the page uses `public/wallets/metamask.png` / `coinbase.svg` if present, or a letter tile.
+
+**Operator credentials** are shared inside the team only and are not written in this repository. The page stores only a SHA-256 hash of `username:password` (default in `src/lib/config.js`); to change them, run `npm run operator-hash -- <username> <password>` and put the output in `web/.env.local` (and in Vercel) as `VITE_OPERATOR_HASH`. This is a front-end gate for the demo, not real security: the check runs in the browser, so a production version moves operator login to a server.
 
 After signing in, the person picks **I need power** (buyer view) or **I have a battery to share** (seller view) and can switch any time. The account menu (top right) shows the Aegis wallet and **Log out**.
 

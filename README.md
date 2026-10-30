@@ -129,11 +129,11 @@ Run the demo without hardware (needs testnet keys and contract v2 in `.env`, see
 # terminal 1: Wokwi-compatible mock + Meter A + Meter B + relayer
 cd bridge && npm run v2:mock        # verify only; SETTLEMENT_MODE=testnet npm run v2:mock settles on testnet
 
-# terminal 2: dashboard on http://localhost:5173/console.html?guest
+# terminal 2: sign in on http://localhost:5173/auth.html (user account, or the Operator tab for the control room)
 cd web && npm install && npm run dev
 ```
 
-In the dashboard: **Operator → Control room** (PV, load, utility outage, emergency backup, engine Mock or Wokwi live), turn on **Utility outage**, then **Buyer → Get power**, choose an order (10–100 Wh) and pay with MoMo. The supply stops by itself when the order is reached (or press **Stop and pay**). Turn on **Tamper Meter B** first to see the backend reject a trade. Receipts are in **Operator → Oracle**. Unity only visualises; every control is in the dashboard. Deployment, the Mosquitto bridge for Wokwi and all MQTT topics: [docs/integration-v2.md](docs/integration-v2.md).
+In the dashboard (signed in as the operator): **Operator → Control room** (PV, load, utility outage, emergency backup, engine Mock or Wokwi live), turn on **Utility outage**, then **Buyer → Get power**, choose an order (10–100 Wh) and pay with MoMo. The supply stops by itself when the order is reached (or press **Stop and pay**). Turn on **Tamper Meter B** first: the shop's meter then under-reports by 40%, and the contract freezes the deposit as *Disputed* (testnet mode; check the firmware first with `npm run v2:tamper-check`). Receipts are in **Operator → Oracle**. Unity only visualises; every control is in the dashboard. Deployment, the Mosquitto bridge for Wokwi and all MQTT topics: [docs/integration-v2.md](docs/integration-v2.md).
 
 ## Repository
 

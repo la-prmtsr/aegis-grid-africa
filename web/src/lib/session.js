@@ -8,6 +8,7 @@
 // - MetaMask / Coinbase Wallet sign in with the wallet the user already has.
 
 import { ethers } from 'ethers';
+import { DEFAULT_COUNTRY, countryByIso, countryOf } from './countries.js';
 
 const ACCOUNTS_KEY = 'aegis.accounts';
 const SESSION_KEY = 'aegis.session';
@@ -19,18 +20,44 @@ function write(key, value) {
   try { localStorage.setItem(key, JSON.stringify(value)); return true; } catch { return false; }
 }
 
-/** Ghana numbers: accepts 024 123 4567, 24 123 4567 or +233 24 123 4567. Returns +233XXXXXXXXX or null. */
-export function normalizePhone(input) {
-  const d = String(input || '').replace(/[^\d+]/g, '');
-  let local = null;
-  if (/^\+233\d{9}$/.test(d)) local = d.slice(4);
-  else if (/^233\d{9}$/.test(d)) local = d.slice(3);
-  else if (/^0\d{9}$/.test(d)) local = d.slice(1);
-  else if (/^\d{9}$/.test(d)) local = d;
-  return local ? `+233${local}` : null;
+/**
+ * Phone number -> +E.164 for the chosen country (lib/countries.js), or null when it does not look valid.
+ * Accepts the national number with or without its leading 0 (024 123 4567, 24 123 4567), or a full +number
+ * (then the country is taken from the number itself).
+ */
+export function normalizePhone(input, iso = DEFAULT_COUNTRY) {
+  const raw = String(input || '').trim();
+  let digits = raw.replace(/\D/g, '');
+  let c = countryByIso(iso);
+  if (raw.startsWith('+') || raw.startsWith('00')) {
+    if (raw.startsWith('00')) digits = digits.slice(2);
+    const byNumber = countryOf(digits);
+    if (!byNumber) return null;
+    c = byNumber;
+    digits = digits.slice(c.dial.length);
+  } else if (digits.startsWith(c.dial) && digits.length > c.len[1]) {
+    digits = digits.slice(c.dial.length); // typed the country code without +
+  }
+  digits = digits.replace(/^0+/, ''); // trunk prefix
+  return digits.length >= c.len[0] && digits.length <= c.len[1] ? `+${c.dial}${digits}` : null;
 }
-export const prettyPhone = (p) => (p ? `${p.slice(0, 4)} ${p.slice(4, 6)} ${p.slice(6, 9)} ${p.slice(9)}` : '');
-export const maskPhone = (p) => (p ? `${p.slice(0, 4)} ${p.slice(4, 6)} ··· ${p.slice(9)}` : '');
+/** Split a stored number into its country and national digits (for prefilling the form). */
+export function splitPhone(e164) {
+  const c = countryOf(e164);
+  return c ? { iso: c.iso, national: String(e164).replace(/^\+/, '').slice(c.dial.length) } : { iso: DEFAULT_COUNTRY, national: '' };
+}
+/** "+233 24 123 4567": the national digits in groups of 3, the last 4 together. */
+export function prettyPhone(p) {
+  if (!p) return '';
+  const { iso, national } = splitPhone(p);
+  const h = national.slice(0, -4);
+  const head = [];
+  for (let i = h.length; i > 0; i -= 3) head.unshift(h.slice(Math.max(0, i - 3), i)); // groups of 3 from the right
+  if (head.length > 1 && head[0].length === 1) head.splice(0, 2, head[0] + head[1]);
+  return `+${countryByIso(iso).dial} ${[...head, national.slice(-4)].join(' ')}`;
+}
+/** "+233 ··· 4567" */
+export const maskPhone = (p) => (p ? `+${countryOf(p)?.dial ?? ''} ··· ${String(p).slice(-4)}` : '');
 
 export const findAccount = (phone) => read(ACCOUNTS_KEY, {})[phone] || null;
 
@@ -75,13 +102,14 @@ export function momoAccount(phone, name, area) {
 
 /**
  * Session shape:
- * { name, phone?, area?, method: 'password'|'momo'|'wallet'|'guest', address?, walletName?, rdns?, role? }
+ * { name, phone?, area?, method: 'password'|'momo'|'wallet'|'operator', address?, walletName?, rdns?, role? }
  */
-export const getSession = () => read(SESSION_KEY, null);
+/** The signed-in person, or null. Guest sessions from older builds no longer count (there is no guest mode). */
+export const getSession = () => { const s = read(SESSION_KEY, null); return s && s.method !== 'guest' ? s : null; };
 export function setSession(s) { write(SESSION_KEY, { ...s, at: Date.now() }); }
 export function updateSession(patch) { const s = getSession(); if (s) setSession({ ...s, ...patch }); }
 export function clearSession() { try { localStorage.removeItem(SESSION_KEY); } catch { /* ignore */ } }
 
 export const initials = (name) => String(name || '?').trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join('').toUpperCase() || '?';
 
-export const METHOD_LABEL = { password: 'Aegis account', momo: 'MoMo (simulated)', wallet: 'Browser wallet', guest: 'Guest' };
+export const METHOD_LABEL = { password: 'Aegis account', momo: 'MoMo (simulated)', wallet: 'Browser wallet', operator: 'Operator (demo account)' };

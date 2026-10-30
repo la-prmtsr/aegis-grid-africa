@@ -13,10 +13,10 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <link rel="stylesheet" href="/src/console/console.css">
 <script>
-  // Sign-in gate: no session -> log in page. "console.html?guest" opens the demo street without an account.
+  // Sign-in gate: everyone signs in as a user or an operator; no session (or an old guest one) -> log in page.
   try {
-    if (/[?&]guest\b/.test(location.search)) localStorage.setItem('aegis.session', JSON.stringify({ name: 'Guest', method: 'guest', at: Date.now() }));
-    if (!localStorage.getItem('aegis.session')) location.replace('./auth.html#login');
+    const s = JSON.parse(localStorage.getItem('aegis.session') || 'null');
+    if (!s || s.method === 'guest') { localStorage.removeItem('aegis.session'); location.replace('./auth.html#login'); }
   } catch (e) { /* storage blocked: show the console */ }
 </script>
 </head>
