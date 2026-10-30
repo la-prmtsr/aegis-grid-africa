@@ -10,6 +10,7 @@ export const state = {
   lastSeen: { METER_A: 0, METER_B: 0 }, // Date.now() of last telemetry
   readings: {}, // tradeId -> { seller: {...}, buyer: {...} } final readings (retained topics)
   backend: null, // relayer status: active trade, approvals, last result, notice
+  cases: {}, // trade id -> { status: 'flagged' | 'suspended', at } operator decisions on a suspicious trade
   notices: {}, // user key -> { warnings: [...] } operator warnings (app/notice/<user key>, retained)
   history: [], // rolling telemetry samples for charts: { t, pvW, exportW, curtailedW, importW, unservedW }
   curtailedWhSession: 0, // integrated curtailed energy since this page opened (simulated minutes)

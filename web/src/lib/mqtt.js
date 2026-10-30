@@ -10,8 +10,16 @@ let noticeTopics = []; // operator warnings: the user's own topic, or all of the
 /** Who is using this dashboard: tags the user's requests, and picks which operator warnings to receive. */
 export function setRequester(user, { operator = false } = {}) {
   requester = user || null;
-  noticeTopics = operator ? [topics.noticeAll] : requester ? [topics.notice(requester.id)] : [];
+  noticeTopics = [topics.caseAll, ...(operator ? [topics.noticeAll] : requester ? [topics.notice(requester.id)] : [])];
   if (client?.connected && noticeTopics.length) client.subscribe(noticeTopics);
+}
+
+/** Operator: the outcome of reviewing a suspicious trade (retained, no message text), for the seller's notifications. */
+export function publishCase(tradeId, c) {
+  if (!client || !client.connected || !tradeId) return false;
+  client.publish(topics.tradeCase(tradeId), JSON.stringify(c), { qos: 1, retain: true });
+  update({ cases: { ...state.cases, [tradeId]: c } });
+  return true;
 }
 
 /**
@@ -49,6 +57,9 @@ export function startMqtt() {
 
     if (topic === topics.backendStatus) {
       update({ backend: msg });
+    } else if (topic.startsWith(topics.tradeCase(''))) {
+      const id = Number(topic.slice(topics.tradeCase('').length));
+      if (id) update({ cases: { ...state.cases, [id]: msg } });
     } else if (topic.startsWith(topics.notice(''))) {
       const key = topic.slice(topics.notice('').length);
       update({ notices: { ...state.notices, [key]: msg } });

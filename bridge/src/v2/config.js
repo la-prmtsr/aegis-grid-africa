@@ -46,6 +46,7 @@ export const topics = {
   // The app (dashboard) talks to the backend here.
   appRequest: `${ROOT}/app/request`,
   appDemo: `${ROOT}/app/demo`,
+  noticeAll: `${ROOT}/app/notice/+`, // operator warnings per user (retained); "suspended": true blocks that user's requests
 };
 
 export const METER = { seller: 'METER_A', buyer: 'METER_B' };

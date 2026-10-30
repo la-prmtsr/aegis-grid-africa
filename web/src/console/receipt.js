@@ -102,13 +102,19 @@ export function receiptHTML(t, r, o) {
   const within = gap != null && Math.abs(gap) <= o.tolPct;
   const lostWh = sent != null && got != null ? sent - got : null;
 
+  // tamper: the backend's live guard stopped the trade, or METER_B's final carries its tamper flag (Stage 6.2)
+  const tamper = Boolean(bt?.suspect || bt?.finals?.buyer?.tamper === true);
+  const tamperTxt = `METER_B reported ${gap == null ? 'less' : `${gap.toFixed(1)}% less`} than METER_A sent${bt?.suspect ? ` (${bt.suspect.reason}); the backend stopped the supply at about ${whTxt(bt.suspect.atWh)} Wh to protect the seller's battery` : ' and its tamper flag was on'}.`;
   // verdict line
   let verdict;
   if (t.status === 'Open' && bt?.status === 'SIMULATION_VERIFIED') verdict = ['ok', `Simulation verified: gap ${gap == null ? '?' : gap.toFixed(2)}% (limit ${o.tolPct}%)`, 'Both Wokwi final readings are consistent. SETTLEMENT_MODE=off: simulated readings are not settled on-chain, so the deposit returns to the buyer when the trade expires.'];
+  else if (t.status === 'Open' && (bt?.status === 'REJECTED' || bt?.status === 'FAILED') && tamper) verdict = ['bad', 'Rejected: suspected tamper on METER_B', `${tamperTxt} Nothing was sent on-chain and nobody was paid; the deposit returns to the buyer when the trade expires. The operator reviews it in Reports.`];
   else if (t.status === 'Open' && (bt?.status === 'REJECTED' || bt?.status === 'FAILED')) verdict = ['bad', 'Rejected by the backend: nothing sent on-chain', `${bt.reason || 'The evidence failed a check'}. The deposit returns to the buyer when the trade expires.`];
+  else if (t.status === 'Open' && bt?.suspect) verdict = ['bad', 'Supply stopped: suspected tamper on METER_B', `${tamperTxt} Waiting for both final readings.`];
   else if (t.status === 'Open') verdict = ['warn', 'Trade open', o.note || 'The meters are counting. The receipt is final once the backend has checked both final readings.'];
   else if (t.status === 'Refunded') verdict = ['idle', 'Refunded', 'No energy was billed. The full deposit went back to the buyer.'];
-  else if (t.status === 'Disputed') verdict = ['bad', `Readings disagree by ${gap == null ? '?' : gap.toFixed(1)}% (limit ${o.tolPct}%)`, 'The contract froze the deposit. Nobody is paid until the arbiter resolves it, or it is refunded after 7 days.'];
+  else if (t.status === 'Disputed') verdict = ['bad', tamper ? 'Disputed: suspected tamper on METER_B' : `Readings disagree by ${gap == null ? '?' : gap.toFixed(1)}% (limit ${o.tolPct}%)`, `${tamper ? `${tamperTxt} ` : ''}The contract froze the deposit. Nobody is paid until the operator resolves it (it can pay the seller for what METER_A sent), or it is refunded after 7 days.`];
+  else if (t.status === 'Settled' && !t.disputed && tamper) verdict = ['warn', 'Settled, but tamper was suspected', `${bt?.suspect ? `The backend stopped the supply at about ${whTxt(bt.suspect.atWh)} Wh (${bt.suspect.reason}), so` : 'METER_B had its tamper flag on, but'} both final readings still agreed within ${o.tolPct}%: the shop paid for the ${whTxt(t.deliveredWh ?? got)} Wh it received. The operator reviews the shop in Reports.`];
   else if (t.disputed) verdict = ['warn', 'Resolved by the arbiter', `The arbiter accepted ${whTxt(t.deliveredWh)} Wh after a dispute.`];
   else verdict = ['ok', 'Readings consistent: settled on-chain', `Both signatures checked by the contract. The buyer pays only for the ${whTxt(t.deliveredWh ?? got)} Wh Meter B received.`];
 

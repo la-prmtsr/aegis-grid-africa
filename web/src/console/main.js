@@ -3,7 +3,7 @@
 import { ACCOUNTS, CHAIN, SITE, MQTT_WS_URL, METER, MOMO, IMPACT, txUrl, addrUrl } from '../lib/config.js';
 import { fiat, whToFiat, depositFiat, generatorFiat, realText, scaleNote, momoForTrade } from '../lib/momo.js';
 import { state, subscribe, update, tradeList } from '../lib/store.js';
-import { startMqtt, simControl, meterOnline, setRequester, publishNotice } from '../lib/mqtt.js';
+import { startMqtt, simControl, meterOnline, setRequester, publishNotice, publishCase } from '../lib/mqtt.js';
 import { startChain, connectWallet, resumeWallet, useWallet, disconnectWallet, hasWallet, tx, isAddress, same, explain } from '../lib/chain.js';
 import { getSession, clearSession, initials, maskPhone, METHOD_LABEL, userKey, requesterOf } from '../lib/session.js';
 import { money, wh, watts, pct, gapPct, clock, simClock, impact, short, shortHash, esc } from '../lib/format.js';
@@ -98,13 +98,6 @@ const svgI = (d) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" 
 /** Stat tile (compact) and KPI card (bento). tone is a CSS colour token name. */
 const stat = (tone, icon, label, value, sub) => `<div class="stat" style="--tone:var(--${tone})"><i class="ic">${svgI(KI[icon])}</i><span>${label}</span><b>${value}</b>${sub ? `<em>${sub}</em>` : ''}</div>`;
 const kpiCard = (tone, icon, label, value, sub, cls = '') => `<div class="kpi ${cls}" style="--tone:var(--${tone})"><i class="ic">${svgI(KI[icon])}</i><span>${label}</span><b>${value}</b>${sub ? `<em>${sub}</em>` : ''}</div>`;
-/** Tiny area sparkline for the hero card (white on the gradient). */
-function sparkSVG(vals) {
-  if (vals.length < 2) return '';
-  const W = 300, H = 70, max = Math.max(1, ...vals);
-  const d = vals.map((v, i) => `${i ? 'L' : 'M'}${((i / (vals.length - 1)) * W).toFixed(1)} ${(H - 4 - (v / max) * (H - 10)).toFixed(1)}`).join(' ');
-  return `<svg class="spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true"><path d="${d} L${W} ${H} L0 ${H}Z" fill="rgba(255,255,255,.16)"/><path d="${d}" fill="none" stroke="#fff" stroke-width="2" vector-effect="non-scaling-stroke"/></svg>`;
-}
 
 function viewKey() {
   if (ui.persona === 'ops') return 'ops';
@@ -183,14 +176,6 @@ function readingsOf(t) {
   const sellerWh = t.sellerWh ?? (r.seller ? Number(r.seller.wh) : f.seller ? f.seller.wh : null);
   const buyerWh = t.buyerWh ?? (r.buyer ? Number(r.buyer.wh) : f.buyer ? f.buyer.wh : (t.status === 'Settled' && !t.disputed ? t.deliveredWh : null));
   return { sellerWh, buyerWh, socAfter: r.seller?.socBpsAfter ?? f.seller?.socBpsAfter ?? null, tamper: r.buyer?.tamper ?? f.buyer?.tamper ?? null };
-}
-
-function connectionNotice() {
-  if (state.mqtt === 'online' && (meterOnline(METER.seller) || meterOnline(METER.buyer))) return '';
-  if (state.mqtt !== 'online') {
-    return `<div class="offline-card">Not connected to the MQTT broker yet (<code>${esc(MQTT_WS_URL)}</code>). Live meter data appears here once it connects.</div>`;
-  }
-  return `<div class="offline-card">Connected, but no meter is sending on site <code>${esc(SITE)}</code>. Start Faras's Wokwi (with the Mosquitto bridge to the public broker) and the backend (<code>cd bridge && npm run v2</code>), or the Wokwi mock (<code>npm run v2:mock</code>).</div>`;
 }
 
 /** Messages from the backend relayer (for example: Wokwi control not configured, trade held). */
@@ -386,7 +371,7 @@ function buyerParts() {
   patch('b-banner', !state.grid ? '' : outage
     ? `<div class="banner bad"><div><b>Load shedding on this feeder</b>A seller's battery next door can power your shop instead of a generator.</div></div>`
     : `<div class="banner ok"><div><b>Grid power is on</b>Requests open during load shedding. For the demo you can start an outage here.</div><button class="btn btn-dark" type="button" data-act="outage-on">Start load shedding (demo)</button></div>`);
-  patch('b-notice', connectionNotice() + backendNotice());
+  patch('b-notice', backendNotice()); // connection state lives in the Live pill of the top bar
 
   const settledMine = myTrades('buyer').filter((x) => x.status === 'Settled');
   patch('b-stats', [
@@ -405,7 +390,16 @@ function buyerParts() {
   const requesting = buyer?.requesting || state.backend?.requests?.app;
   const busy = foreignActive() || (tradeId && ownerOf(tradeId) && ownerOf(tradeId).id !== me && t?.status === 'Open' && !closedOffChain(t) ? { id: tradeId } : null);
   if (!requesting && !state.backend?.active) ui.requested = false;
-  if (busy) {
+  const btNow = tradeId ? backendTrade(tradeId) : null;
+  const refused = state.backend?.refused;
+  if (refused && refused.user?.id === me && refused.at > (ui.refusedSeen || pageLoadedAt - 5000)) { ui.refusedSeen = refused.at; toast('Request refused: your account is suspended by the operator.'); }
+  if (state.notices[me]?.suspended && !(tradeId && btNow && !FINAL.includes(btNow.status))) {
+    html = `<div class="ph"><h2>Get power</h2><span class="pill bad">Account suspended</span></div>
+      <p style="margin:0;color:var(--muted)">After repeated meter mismatches the operator suspended your account, so you cannot order power right now. Contact the operator to have your meter checked; your receipts stay available.</p>`;
+  } else if (tradeId && btNow?.suspect && !FINAL.includes(btNow.status) && !busy) {
+    html = `<div class="ph"><h2>Trade #${tradeId}</h2><span class="pill bad">Supply stopped</span></div>
+      <div class="suspect-card"><b>Your meter did not match the seller's meter</b><p>The backend stopped the supply at about ${fmtWh(btNow.suspect.atWh)} Wh to protect the seller's battery. Both meters now send their final readings; the trade will be rejected or frozen, and the operator reviews it.</p></div>`;
+  } else if (busy) {
     html = `<div class="ph"><h2>Get power</h2><span class="pill warn">Battery busy</span></div>
       <p style="margin:0;color:var(--muted)">Another shop on this feeder is using the shared battery right now${busy.id ? ` (trade #${busy.id})` : ''}. You can order as soon as it finishes; this card updates by itself.</p>
       <div class="flowbar" aria-hidden="true" style="margin:16px 0 4px"><i></i></div>`;
@@ -498,7 +492,7 @@ function receiptHTML(t) {
       : t.status === 'Disputed' ? `<p style="margin:0;font-size:13.5px;color:#7F1D1D">The two meters disagree by more than ${tol}%. The escrow keeps the deposit until the arbiter resolves it, or refunds the buyer after the dispute window.</p>`
       : t.status === 'Refunded' ? `<div class="row" style="border:0;padding:0"><span>Refunded to buyer</span><b>${money(t.refundAmount)}</b></div>`
       : bt?.status === 'SIMULATION_VERIFIED' ? `<p style="margin:0;font-size:13.5px;color:var(--muted)">Both Wokwi meters agree within ${tol}%. Settlement is switched off for simulated readings, so nothing was paid. The deposit returns to you when the trade expires.</p>`
-      : bt?.status === 'REJECTED' || bt?.status === 'FAILED' ? `<p style="margin:0;font-size:13.5px;color:#7F1D1D">Not settled: ${esc(bt.reason || 'the evidence failed a check')}. Nothing was paid; the deposit returns to you when the trade expires.</p>` : '',
+      : bt?.status === 'REJECTED' || bt?.status === 'FAILED' ? `<p style="margin:0;font-size:13.5px;color:#7F1D1D">${suspectOf(t.id) ? 'Rejected: suspected tamper on your meter (METER_B). ' : ''}Not settled: ${esc(bt.reason || 'the evidence failed a check')}. Nothing was paid; the deposit returns to you when the trade expires.</p>` : '',
     momoHtml: momoBlock(t),
     savedHtml: t.status === 'Settled' ? `<div class="row"><span>Saved vs a diesel generator</span><b style="color:var(--green)">${fiat(Math.max(0, generatorFiat(t.deliveredWh, IMPACT.dieselLPerKWh) - whToFiat(t.deliveredWh)))}</b></div>` : '',
     chainHtml: chainButtonHTML({ openTx: t.openTx, settleTx: t.settleTx, refundTx: t.refundTx, txUrl }),
@@ -569,7 +563,7 @@ function sellerParts() {
   const bal = withdrawableOf(ACCOUNTS.seller.address);
   const sellerMomo = myTrades('seller').flatMap((x) => momoForTrade(x, shareBps())).filter((r) => r.kind === 'payout').reduce((x, r) => x + (r.amount || 0), 0);
   patch('s-wallet', walletChip({ momoLabel: 'Paid to your MoMo', momoAmount: sellerMomo, phone: MOMO.sellerPhone, chainLabel: 'Earnings on-chain', bal }));
-  patch('s-notice', connectionNotice());
+  patch('s-notice', '');
 
   const settledS = myTrades('seller').filter((x) => x.status === 'Settled');
   patch('s-stats', [
@@ -730,7 +724,7 @@ function opsSkeleton() {
 }
 
 function opsParts() {
-  patch('o-notice', connectionNotice());
+  patch('o-notice', '');
   const T = state.totals;
   const list = tradeList();
   const settled = list.filter((t) => t.status === 'Settled');
@@ -738,9 +732,7 @@ function opsParts() {
   const sum = (k) => settled.reduce((a, t) => a + BigInt(t[k] || 0), 0n);
   const im = impact((T?.totalDeliveredWh || 0) * MOMO.demoScale);
   patch('o-kpis', `
-    <div class="kpi hero" style="--tone:var(--green)"><i class="ic">${svgI(KI.bolt)}</i><span>Energy delivered</span><b>${T ? wh(T.totalDeliveredWh) : '–'}</b>
-      <em>on-chain totalDeliveredWh = ${T ? realText(T.totalDeliveredWh) : '–'} at a real shop (×${MOMO.demoScale}) · about ${im.litres.toFixed(2)} L diesel avoided (assumption)</em>
-      ${sparkSVG(state.history.slice(-120).map((p) => p.exportW))}<small class="spark-l">${state.history.length > 1 ? 'Battery → shop, live' : ''}</small></div>
+    ${energyCardHTML(T, list, im)}
     ${kpiCard('sky', 'swap', 'Trades', T ? String(T.nextTradeId - 1) : '–', `${settled.length} settled`)}
     ${kpiCard('rose', 'shield', 'Disputes caught', String(disputed.length), `${list.filter((t) => t.status === 'Disputed').length} still frozen`)}
     ${kpiCard('violet', 'coin', 'Paid for energy', money(sum('amount')), 'test ETH')}
@@ -820,6 +812,47 @@ function opsParts() {
     <p class="note">Each party withdraws its own balance with <span class="mono">withdraw()</span> from its wallet.</p>`);
 }
 
+/** Smooth path through points (Catmull-Rom as cubic Béziers). */
+function smoothPath(pts) {
+  if (pts.length < 2) return '';
+  let d = `M${pts[0][0].toFixed(1)} ${pts[0][1].toFixed(1)}`;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = pts[i - 1] || pts[i], p1 = pts[i], p2 = pts[i + 1], p3 = pts[i + 2] || p2;
+    const c1 = [p1[0] + (p2[0] - p0[0]) / 6, p1[1] + (p2[1] - p0[1]) / 6], c2 = [p2[0] - (p3[0] - p1[0]) / 6, p2[1] - (p3[1] - p1[1]) / 6];
+    d += ` C${c1[0].toFixed(1)} ${c1[1].toFixed(1)} ${c2[0].toFixed(1)} ${c2[1].toFixed(1)} ${p2[0].toFixed(1)} ${p2[1].toFixed(1)}`;
+  }
+  return d;
+}
+
+/** Overview hero: cumulative energy settled on-chain, trade by trade, with three short facts underneath. */
+function energyCardHTML(T, list, im) {
+  const settled = list.filter((t) => t.status === 'Settled').sort((a, b) => (a.settleTime || a.openTime || 0) - (b.settleTime || b.openTime || 0) || a.id - b.id);
+  let acc = 0;
+  const vals = [0, ...settled.map((t) => (acc += Number(t.deliveredWh || 0)))];
+  const total = T?.totalDeliveredWh ?? acc;
+  const W = 600, H = 170, top = 14, bot = 10;
+  const max = Math.max(1, ...vals) * 1.08;
+  const pts = vals.map((v, i) => [vals.length < 2 ? 0 : (i / (vals.length - 1)) * W, top + (1 - v / max) * (H - top - bot)]);
+  const line = smoothPath(pts);
+  const last = pts[pts.length - 1];
+  const grid = [0.25, 0.5, 0.75].map((f) => `<line x1="0" x2="${W}" y1="${(top + f * (H - top - bot)).toFixed(1)}" y2="${(top + f * (H - top - bot)).toFixed(1)}" stroke="rgba(255,255,255,.22)" stroke-dasharray="6 6"/>`).join('');
+  const chart = vals.length < 2
+    ? '<p class="ei-empty">The curve starts with the first settled trade.</p>'
+    : `<svg class="ei-chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Cumulative energy delivered: ${esc(wh(total))} over ${settled.length} settled trades">
+      <defs><linearGradient id="eiFill" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".32"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient></defs>
+      ${grid}<path d="${line} L${W} ${H} L0 ${H}Z" fill="url(#eiFill)"/>
+      <path d="${line}" fill="none" stroke="#DCFCE7" stroke-width="4" stroke-linecap="round"/>
+      <circle cx="${last[0].toFixed(1)}" cy="${last[1].toFixed(1)}" r="7" fill="#DCFCE7" stroke="#16A34A" stroke-width="3"/></svg>`;
+  const nTrades = T ? T.nextTradeId - 1 : list.length;
+  return `<div class="kpi hero ei">
+    <div class="ei-h"><span class="ei-t">${svgI(KI.bolt)}Energy intelligence</span><span class="ei-pill">${svgI('<path d="M3 3v18h18"/><path d="m7 15 4-4 3 3 5-6"/>')}On-chain</span></div>
+    <span class="ei-l">Total energy delivered</span>
+    <b class="ei-v">${T ? wh(total) : '–'}<small>Cumulative · ${realText(total)} real (×${MOMO.demoScale})</small></b>
+    ${chart}
+    <div class="ei-foot"><div><span>Energy trades</span><b>${nTrades}</b></div><div><span>Est. diesel avoided</span><b>${im.litres.toFixed(2)} L</b></div><div><span>Settlement</span><b>${settled.length} / ${nTrades}</b></div></div>
+  </div>`;
+}
+
 function chartSVG() {
   const h = state.history.slice(-300);
   if (h.length < 2) return '<p class="empty">Waiting for telemetry…</p>';
@@ -883,12 +916,28 @@ function flagOf(t) {
   const gap = sellerWh != null && buyerWh != null ? gapPct(sellerWh, buyerWh) : null;
   const tol = (state.totals?.toleranceBps ?? 300) / 100;
   const tamper = bt?.finals?.buyer?.tamper === true;
-  if (!tamper && t.status !== 'Disputed' && !(gap != null && gap > tol)) return null;
+  const live = bt?.suspect && !FINAL.includes(bt.status);
+  if (!bt?.suspect && !tamper && t.status !== 'Disputed' && !(gap != null && gap > tol)) return null;
   return {
     gap,
-    why: tamper ? 'Tamper switch on in METER_B' : t.status === 'Disputed' ? 'Disputed on-chain' : 'Readings disagree',
-    outcome: t.status === 'Disputed' ? 'Deposit frozen' : bt?.status === 'REJECTED' ? 'Rejected' : resultOf(t)[1],
+    live,
+    why: bt?.suspect ? `Suspected tamper: ${bt.suspect.reason}` : tamper ? 'Tamper switch on in METER_B' : t.status === 'Disputed' ? 'Disputed on-chain' : 'Readings disagree',
+    outcome: live ? `Supply stopped at ${fmtWh(bt.suspect.atWh)} Wh · waiting for the final readings` : t.status === 'Disputed' ? 'Deposit frozen' : bt?.status === 'REJECTED' ? 'Rejected · not paid' : resultOf(t)[1],
   };
+}
+
+/** E: a Disputed trade (testnet) can be settled by the contract owner: pay the seller for what the shop should have received. */
+function resolveHTML(t) {
+  if (t.status !== 'Disputed') return '';
+  const { sellerWh } = readingsOf(t);
+  const pay = sellerWh != null ? Math.min(Number(t.maxWh) || Infinity, Math.floor(Number(sellerWh) * (1 - lineLossOf()))) : null;
+  const owner = same(state.wallet?.address, state.totals?.owner);
+  const busy = ui.busy === 'resolve';
+  return `<div class="rep-resolve">
+    ${pay != null ? `<button class="btn btn-green btn-sm" type="button" data-act="resolve-pay" data-id="${t.id}" data-wh="${pay}" ${busy ? 'disabled' : ''}>${busy ? 'Confirm in wallet…' : `Pay seller for ${pay} Wh`}</button>` : ''}
+    <button class="btn btn-line btn-sm" type="button" data-act="resolve-pay" data-id="${t.id}" data-wh="0" ${busy ? 'disabled' : ''}>Refund buyer</button>
+    <small>${owner ? 'Sends resolveDispute from the owner wallet.' : `Needs the contract owner's wallet (testnet): connect ${state.totals?.owner ? short(state.totals.owner) : 'the owner'}.`} Pay seller uses METER_A's reading minus the ${Math.round(lineLossOf() * 100)}% cable loss.</small>
+  </div>`;
 }
 
 function reportsHTML(list) {
@@ -906,22 +955,26 @@ function reportsHTML(list) {
     const w = k ? warningsOf(k) : [];
     const worst = Math.max(...g.items.map((x) => x.f.gap ?? 0));
     const lastW = w[w.length - 1];
+    const suspended = Boolean(k && state.notices[k]?.suspended);
+    const third = w.length + 1 >= 3;
     const form = ui.warnFor === k && k ? `<form class="warn-form" data-form="warn" data-user="${esc(k)}">
-        <label for="warn-msg">Message to ${esc(g.u?.name || 'the user')}</label>
+        <label for="warn-msg">Message to ${esc(g.u?.name || 'the user')}${third && !suspended ? ' · this is warning 3: the account will also be suspended' : ''}</label>
         <textarea id="warn-msg" name="msg" rows="3">Our oracle found that your shop meter and the seller's meter disagree on trade${g.items.length > 1 ? 's' : ''} ${g.items.map((x) => `#${x.t.id}`).join(', ')} (gap up to ${worst.toFixed(0)}%). Please have your meter checked. Repeated mismatches can suspend your account.</textarea>
         <div class="warn-actions"><button class="btn btn-line btn-sm" type="button" data-act="warn-cancel">Cancel</button><button class="btn btn-dark btn-sm" type="submit">Send warning</button></div></form>` : '';
     return `<article class="rep-user ${w.length ? 'warned' : ''}">
       <div class="rep-head">
         <span class="acct-av">${esc(initials(g.u?.name || '?'))}</span>
         <div class="rep-who"><b>${esc(g.u?.name || 'No user')}</b><small class="mono">${k ? esc(g.u?.phone || short(k)) : 'Wokwi button or older trades'}</small></div>
-        <span class="pill ${w.length ? 'bad' : g.items.length > 1 ? 'warn' : 'idle'}">${w.length ? `Suspicious · warned ${w.length}×` : g.items.length > 1 ? 'Repeated mismatch' : 'One mismatch'}</span>
+        ${g.items.some((x) => x.f.live) ? '<span class="pill bad live-pill"><i></i>Live</span>' : ''}
+        <span class="pill ${suspended || w.length ? 'bad' : g.items.length > 1 ? 'warn' : 'idle'}">${suspended ? 'Suspended' : w.length ? `Suspicious · warned ${w.length}×` : g.items.length > 1 ? 'Repeated mismatch' : 'One mismatch'}</span>
       </div>
-      <div class="rep-trades">${g.items.map((x) => `<button type="button" class="rep-t" data-act="receipt" data-id="${x.t.id}" title="Open the receipt of trade #${x.t.id}"><b class="mono">#${x.t.id}</b><span>${esc(x.f.why)}</span><em class="mono">${x.f.gap == null ? '–' : `${x.f.gap.toFixed(1)}%`}</em><small>${esc(x.f.outcome)} · ${clock(x.t.openTime)}</small></button>`).join('')}</div>
+      <div class="rep-trades">${g.items.map((x) => `<div class="rep-t-wrap"><button type="button" class="rep-t ${x.f.live ? 'live' : ''}" data-act="receipt" data-id="${x.t.id}" title="Open the receipt of trade #${x.t.id}"><b class="mono">#${x.t.id}</b><span>${esc(x.f.why)}</span><em class="mono">${x.f.gap == null ? '–' : `${x.f.gap.toFixed(1)}%`}</em><small>${esc(x.f.outcome)} · ${clock(x.t.openTime)}</small></button>${resolveHTML(x.t)}</div>`).join('')}</div>
       ${lastW ? `<p class="rep-last">Last warning ${new Date(lastW.at).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}: “${esc(lastW.message)}”</p>` : ''}
-      ${k ? (form || `<button class="btn ${w.length ? 'btn-line' : 'btn-dark'} btn-sm" type="button" data-act="warn-open" data-user="${esc(k)}">${w.length ? 'Warn again' : 'Mark suspicious and warn'}</button>`) : '<p class="note" style="margin:0">No account is linked to these trades, so there is nobody to warn.</p>'}
+      ${k ? (form || `<div class="rep-actions"><button class="btn ${w.length ? 'btn-line' : 'btn-dark'} btn-sm" type="button" data-act="warn-open" data-user="${esc(k)}">${w.length ? `Warn again (${w.length}/3)` : 'Mark suspicious and warn'}</button>${suspended ? `<button class="btn btn-line btn-sm" type="button" data-act="unsuspend" data-user="${esc(k)}">Lift suspension</button>` : w.length ? `<button class="btn btn-line btn-sm danger" type="button" data-act="suspend" data-user="${esc(k)}">Suspend now</button>` : ''}</div>`) : '<p class="note" style="margin:0">No account is linked to these trades, so there is nobody to warn.</p>'}
     </article>`;
   }).join('');
-  return `${kpis}<section class="panel"><div class="ph"><h2>Tamper reports</h2><small>Trades where the two meters disagree beyond ${pct(state.totals?.toleranceBps ?? 300)}, grouped by the user who ordered them</small></div>
+  const off = state.backend?.stage5b && state.backend.stage5b.settlementMode !== 'testnet';
+  return `${kpis}${off ? `<div class="offline-card"><b>Settlement is off</b> (SETTLEMENT_MODE=off): a tampered trade is only rejected by the backend, so the seller is not paid for the energy it sent. With <code>SETTLEMENT_MODE=testnet</code> the contract freezes the deposit as Disputed and you can pay the seller here with <b>Pay seller</b>.</div>` : ''}<section class="panel"><div class="ph"><h2>Tamper reports</h2><small>Trades where the two meters disagree beyond ${pct(state.totals?.toleranceBps ?? 300)}, grouped by the user who ordered them. Three warnings suspend the account.</small></div>
     <div class="rep-list">${users}</div>
     <p class="note">A warning reaches the user's bell in their dashboard. PROTOTYPE: warnings travel as retained MQTT messages on the public broker; production sends them from the backend to an authenticated account.</p></section>`;
 }
@@ -932,38 +985,80 @@ let notes = (() => { try { return JSON.parse(localStorage.getItem(NOTES_KEY) || 
 const popQueue = [];
 const saveNotes = () => { try { localStorage.setItem(NOTES_KEY, JSON.stringify(notes.slice(0, 60))); } catch { /* private mode */ } };
 
-/** A notification for a finished trade of this user, or null while it is still running. */
-function tradeNote(t) {
-  const bt = backendTrade(t.id);
+const FINAL = ['SETTLED', 'DISPUTED', 'REJECTED', 'FAILED', 'SIMULATION_VERIFIED'];
+/** Gap between the two meters of a trade, as text for notifications. */
+function gapInfo(t) {
   const { sellerWh, buyerWh } = readingsOf(t);
   const gap = sellerWh != null && buyerWh != null ? gapPct(sellerWh, buyerWh) : null;
   const tol = (state.totals?.toleranceBps ?? 300) / 100;
-  const gapTxt = gap == null ? '' : ` by ${gap.toFixed(1)}% (limit ${tol}%)`;
-  if (t.status === 'Disputed') return ['bad', `Trade #${t.id} disputed`, `Your meter and the seller's meter disagree${gapTxt}. The contract froze your deposit until the operator reviews it.`];
-  if (t.status === 'Settled') return ['ok', `Trade #${t.id} paid`, `You received ${fmtWh(t.deliveredWh)} Wh = ${realText(t.deliveredWh)} for ${fiat(whToFiat(t.deliveredWh))}. The receipt is ready.`];
-  if (t.status === 'Refunded') return ['idle', `Trade #${t.id} refunded`, 'No energy was billed. Your deposit is back.'];
-  if (bt?.status === 'REJECTED' || bt?.status === 'FAILED') return ['bad', `Trade #${t.id} rejected`, gap != null && gap > tol ? `Your meter and the seller's meter disagree${gapTxt}, so nothing was paid. Your deposit comes back when the trade expires.` : `${bt.reason || 'The evidence failed a check'}. Nothing was paid; your deposit comes back when the trade expires.`];
-  if (bt?.status === 'SIMULATION_VERIFIED') return ['ok', `Trade #${t.id} verified`, `Both meters agree${gapTxt}. Simulation only: nothing was charged and your deposit comes back when the trade expires.`];
-  return null;
+  return { gap, tol, over: gap != null && gap > tol, txt: gap == null ? '' : ` ${gap.toFixed(1)}% less than the seller's meter (limit ${tol}%)` };
+}
+/** Tamper is suspected: the backend's live guard stopped the trade, or METER_B's final carries its tamper flag. */
+const suspectOf = (id) => backendTrade(id)?.suspect || (backendTrade(id)?.finals?.buyer?.tamper === true ? { reason: 'tamper flag in its final reading' } : null);
+
+/** Buyer: the result of one of my trades ([key, tone, title, body]), or null while it is still running. */
+function buyerNotes(t) {
+  const bt = backendTrade(t.id);
+  const g = gapInfo(t);
+  const out = [];
+  if (bt?.suspect) out.push([`s${t.id}`, 'bad', `Trade #${t.id}: supply stopped`, `Your meter's readings did not match the seller's meter while the power was flowing, so the supply was stopped. The operator will check the trade; you will see the result here.`]);
+  const tamper = suspectOf(t.id) ? ' This looks like tampering with your meter; the operator reviews it.' : '';
+  if (t.status === 'Disputed') out.push([`t${t.id}`, 'bad', `Trade #${t.id} disputed`, `Your meter reported${g.txt}.${tamper} The contract froze your deposit until the operator decides.`]);
+  else if (t.status === 'Settled' && !t.disputed && bt?.suspect) out.push([`t${t.id}`, 'warn', `Trade #${t.id} paid, stopped early`, `The supply was stopped at about ${fmtWh(bt.suspect.atWh)} Wh because your meter did not match the seller's. You paid for the ${fmtWh(t.deliveredWh)} Wh your meter received; the operator reviews the trade.`]);
+  else if (t.status === 'Settled') out.push([`t${t.id}`, 'ok', t.disputed ? `Trade #${t.id} resolved` : `Trade #${t.id} paid`, t.disputed ? `The operator settled the dispute: you paid for ${fmtWh(t.deliveredWh)} Wh. The rest of your deposit is back.` : `You received ${fmtWh(t.deliveredWh)} Wh = ${realText(t.deliveredWh)} for ${fiat(whToFiat(t.deliveredWh))}. The receipt is ready.`]);
+  else if (t.status === 'Refunded') out.push([`t${t.id}`, 'idle', `Trade #${t.id} refunded`, 'No energy was billed. Your deposit is back.']);
+  else if (bt?.status === 'REJECTED' || bt?.status === 'FAILED') out.push([`t${t.id}`, 'bad', `Trade #${t.id} rejected`, g.over ? `Your meter reported${g.txt}, so nothing was paid.${tamper} Your deposit comes back when the trade expires.` : `${bt.reason || 'The evidence failed a check'}. Nothing was paid; your deposit comes back when the trade expires.`]);
+  else if (bt?.status === 'SIMULATION_VERIFIED') out.push([`t${t.id}`, 'ok', `Trade #${t.id} verified`, `Both meters agree. Simulation only: nothing was charged and your deposit comes back when the trade expires.`]);
+  return out;
 }
 
+/** Seller (the battery owner): what happened to the energy the battery sent. */
+function sellerNotes(t) {
+  const bt = backendTrade(t.id);
+  const { sellerWh } = readingsOf(t);
+  const g = gapInfo(t);
+  const out = [];
+  if (bt?.suspect) out.push([`S-s${t.id}`, 'warn', `Trade #${t.id}: supply to the shop stopped`, `The shop's meter did not match yours while your battery was supplying it, so the supply was stopped to protect your battery. Payment is on hold while the operator checks the trade.`]);
+  if (t.status === 'Settled' && !t.disputed && bt?.suspect) out.push([`S-t${t.id}`, 'ok', `Trade #${t.id} paid for the energy before the stop`, `The supply stopped early, but the shop's meter agreed with yours up to that point: the shop paid for ${fmtWh(t.deliveredWh)} Wh and your share is ${money(t.sellerShare)}.`]);
+  else if (t.status === 'Settled') out.push([`S-t${t.id}`, 'ok', t.disputed ? `Trade #${t.id} resolved: you were paid` : `Trade #${t.id} paid`, `${t.disputed ? 'After checking both meters the operator settled the dispute. ' : ''}The shop paid for ${fmtWh(t.deliveredWh)} Wh; your share is ${money(t.sellerShare)}.`]);
+  else if (t.status === 'Disputed') out.push([`S-t${t.id}`, 'bad', `Trade #${t.id}: payment on hold`, `Your battery sent ${fmtWh(sellerWh)} Wh but the shop's meter reported${g.txt}. The deposit is frozen on-chain; the operator can pay you for what your meter sent.`]);
+  else if (bt?.status === 'REJECTED' && (g.over || bt.suspect)) out.push([`S-t${t.id}`, 'bad', `Trade #${t.id} not paid`, `Your battery sent ${fmtWh(sellerWh)} Wh but the shop's meter reported${g.txt}. With settlement off nothing goes on-chain, so this trade is not paid. The operator reviews the shop.`]);
+  const c = state.cases[t.id];
+  if (c) out.push([`S-c${t.id}-${c.status}`, 'warn', c.status === 'suspended' ? `Trade #${t.id}: buyer suspended` : `Trade #${t.id}: buyer flagged`, c.status === 'suspended' ? 'After repeated meter mismatches the operator suspended the shop that bought your energy. It cannot order power until the operator lifts it.' : 'The operator checked the meters and marked the shop that bought your energy as suspicious.']);
+  return out;
+}
+
+/** Operator: suspicious trades as they happen. */
+function operatorNotes(t) {
+  const bt = backendTrade(t.id);
+  const u = ownerOf(t.id);
+  const who = u ? `${u.name || 'A user'} (${u.phone || short(u.id)})` : 'A shop';
+  const out = [];
+  if (bt?.suspect) out.push([`O-s${t.id}`, 'bad', `Suspected tamper on trade #${t.id}`, `${who}: ${bt.suspect.reason}. The supply was stopped at about ${fmtWh(bt.suspect.atWh)} Wh. Review it in Reports.`]);
+  else if (FINAL.includes(bt?.status) && flagOf(t)) out.push([`O-f${t.id}`, 'warn', `Meter mismatch on trade #${t.id}`, `${who}: ${flagOf(t).why}${flagOf(t).gap != null ? `, gap ${flagOf(t).gap.toFixed(1)}%` : ''}. Review it in Reports.`]);
+  return out;
+}
+
+const sellerRole = () => session.role === 'seller' || viewKey() === 'seller';
 function syncNotes() {
-  if (isOperator || !me) return;
+  if (!me && !isOperator) return;
   let changed = false;
-  const add = (n, pop) => {
-    if (notes.some((x) => x.key === n.key)) return;
-    notes.unshift(n); changed = true;
-    if (pop) popQueue.push(n);
-  };
-  myTrades('buyer').forEach((t) => {
-    const n = tradeNote(t);
-    if (!n) return;
-    const bt = backendTrade(t.id);
-    const at = bt?.updatedAt || (t.settleTime || t.refundTime || t.openTime || 0) * 1000;
+  const add = (key, tone, title, body, tradeId, at, view, pop, extra = {}) => {
+    if (notes.some((x) => x.key === key)) return;
     const fresh = at > pageLoadedAt - 20000;
-    add({ key: `t${t.id}`, tone: n[0], title: n[1], body: n[2], tradeId: t.id, at: at || Date.now(), read: !fresh }, fresh && n[0] === 'bad');
-  });
-  (state.notices[me]?.warnings || []).forEach((w) => add({ key: `w${w.id}`, tone: 'warn', title: 'Warning from the operator', body: w.message, tradeId: w.tradeIds?.[0] ?? null, at: w.at, read: false, warning: true }, true));
+    const n = { key, tone, title, body, tradeId, at: at || Date.now(), read: extra.warning ? false : !fresh, view, ...extra };
+    notes.unshift(n); changed = true;
+    if (pop && (fresh || extra.warning)) popQueue.push(n);
+  };
+  const atOf = (t) => backendTrade(t.id)?.updatedAt || (t.settleTime || t.refundTime || t.openTime || 0) * 1000;
+  if (isOperator) {
+    tradeList().forEach((t) => operatorNotes(t).forEach(([k, tone, ti, bo]) => add(k, tone, ti, bo, t.id, backendTrade(t.id)?.suspect?.at || atOf(t), 'ops', tone === 'bad')));
+  } else {
+    myTrades('buyer').forEach((t) => buyerNotes(t).forEach(([k, tone, ti, bo]) => add(k, tone, ti, bo, t.id, k.startsWith('s') ? backendTrade(t.id)?.suspect?.at : atOf(t), 'buyer', tone === 'bad')));
+    if (sellerRole()) myTrades('seller').forEach((t) => sellerNotes(t).forEach(([k, tone, ti, bo]) => add(k, tone, ti, bo, t.id, k.startsWith('S-s') ? backendTrade(t.id)?.suspect?.at : k.startsWith('S-c') ? state.cases[t.id]?.at : atOf(t), 'seller', tone !== 'ok')));
+    (state.notices[me]?.warnings || []).forEach((w) => add(`w${w.id}`, 'warn', 'Warning from the operator', w.message, w.tradeIds?.[0] ?? null, w.at, 'buyer', true, { warning: true }));
+    if (state.notices[me]?.suspended) add(`susp${state.notices[me].suspendedAt || 0}`, 'bad', 'Your account is suspended', 'After repeated meter mismatches the operator suspended your account: you cannot order power for now. Contact the operator to have your meter checked.', null, state.notices[me].suspendedAt || Date.now(), 'buyer', true, { warning: true });
+  }
   if (changed) { notes.sort((a, b) => b.at - a.at); saveNotes(); renderBell(); }
   showNextPop();
 }
@@ -975,7 +1070,7 @@ const ago = (at) => { const m = Math.round((Date.now() - at) / 60000); return m 
 
 function renderBell() {
   if (!bellBtn) return;
-  bellBtn.hidden = isOperator;
+  bellBtn.hidden = false;
   const unread = notes.filter((n) => !n.read).length;
   bellBtn.innerHTML = `${svgI(BELL_ICON)}${unread ? `<span class="bell-n">${unread > 9 ? '9+' : unread}</span>` : ''}`;
   bellBtn.setAttribute('aria-label', unread ? `Notifications, ${unread} unread` : 'Notifications');
@@ -985,7 +1080,7 @@ function renderBell() {
     ${notes.length ? `<div class="bm-list">${notes.slice(0, 20).map((n) => `<button type="button" class="bm-item ${n.tone} ${n.read ? '' : 'unread'}" data-note="${esc(n.key)}">
       <i class="bm-ic" aria-hidden="true">${svgI(NOTE_ICON[n.tone] || KI.info)}</i>
       <span><b>${esc(n.title)}</b><small>${esc(n.body)}</small><em>${ago(n.at)}${n.tradeId ? ' · view receipt' : ''}</em></span></button>`).join('')}</div>`
-    : '<p class="bm-empty">No notifications yet. Trade results and messages from the operator appear here.</p>'}`;
+    : `<p class="bm-empty">${isOperator ? 'No alerts yet. Suspected tampering and meter mismatches appear here as they happen.' : 'No notifications yet. Trade results and messages from the operator appear here.'}</p>`}`;
 }
 function toggleBell(open = bellMenu.hidden) {
   bellMenu.hidden = !open;
@@ -997,7 +1092,9 @@ function openNote(n) {
   if (!n.read) { n.read = true; saveNotes(); }
   renderBell();
   if (n.tradeId && state.trades[n.tradeId]) {
-    if (viewKey() !== 'buyer') { ui.persona = 'ama'; ui.mode = 'buyer'; save(); render(); }
+    const want = n.view || 'buyer';
+    if (want === 'ops') { if (viewKey() !== 'ops') { ui.persona = 'ops'; save(); render(); } }
+    else if (viewKey() !== want) { ui.persona = want === 'seller' ? 'kwame' : 'ama'; ui.mode = want; save(); render(); }
     ui.receiptId = n.tradeId; render(); receipts.open();
   }
 }
@@ -1081,6 +1178,18 @@ main.addEventListener('click', async (e) => {
     case 'receipt': ui.receiptId = Number(btn.dataset.id); render(); return receipts.open();
     case 'warn-open': ui.warnFor = btn.dataset.user; parts.delete('o-reports'); render(); return main.querySelector('#warn-msg')?.focus();
     case 'warn-cancel': ui.warnFor = null; return render();
+    case 'suspend': case 'unsuspend': {
+      const key = btn.dataset.user, on = act === 'suspend';
+      const prev = state.notices[key] || {};
+      const ok = publishNotice(key, { ...prev, warnings: prev.warnings || [], suspended: on, suspendedAt: on ? Date.now() : null });
+      if (ok) tradeList().filter((t) => ownerOf(t.id)?.id === key && flagOf(t)).forEach((t) => publishCase(t.id, { status: on ? 'suspended' : 'flagged', at: Date.now() }));
+      return toast(!ok ? 'Not connected to MQTT yet.' : on ? 'Account suspended: the backend refuses its requests until you lift it.' : 'Suspension lifted.');
+    }
+    case 'resolve-pay': {
+      const id = btn.dataset.id, whv = btn.dataset.wh;
+      if (!same(state.wallet?.address, state.totals?.owner)) { toast("Connect the contract owner's wallet first (testnet account)."); return connect(); }
+      return walletAction('resolve', () => tx.resolveDispute(id, whv), whv === '0' ? `Trade #${id}: deposit refunded to the buyer.` : `Trade #${id}: seller paid for ${whv} Wh.`);
+    }
     case 'load-up': return sim({ shopLoadW: Math.min(600, Number(b?.loadW ?? 300) + 50) });
     case 'load-down': return sim({ shopLoadW: Math.max(0, Number(b?.loadW ?? 300) - 50) });
     case 'as-ama': ui.persona = 'ama'; ui.mode = 'buyer'; save(); return render();
@@ -1127,9 +1236,12 @@ main.addEventListener('submit', (e) => {
     if (!msg) return toast('Write a short message for the user.');
     const prev = state.notices[key]?.warnings || [];
     const tradeIds = tradeList().filter((t) => ownerOf(t.id)?.id === key && flagOf(t)).map((t) => t.id);
-    const ok = publishNotice(key, { warnings: [...prev, { id: `${Date.now().toString(36)}`, at: Date.now(), message: msg.slice(0, 400), tradeIds, by: 'operator' }].slice(-10) });
+    const old = state.notices[key] || {};
+    const suspend = old.suspended || prev.length + 1 >= 3; // the third warning suspends the account
+    const ok = publishNotice(key, { ...old, warnings: [...prev, { id: `${Date.now().toString(36)}`, at: Date.now(), message: msg.slice(0, 400), tradeIds, by: 'operator' }].slice(-10), suspended: suspend, suspendedAt: suspend ? old.suspendedAt || Date.now() : null });
+    if (ok) tradeIds.forEach((id) => publishCase(id, { status: suspend ? 'suspended' : 'flagged', at: Date.now() }));
     ui.warnFor = null;
-    toast(ok ? 'Warning sent. The user sees it under the bell in their dashboard.' : 'Not connected to MQTT yet: the warning was not sent.');
+    toast(!ok ? 'Not connected to MQTT yet: the warning was not sent.' : suspend ? 'Warning sent and the account is suspended: its requests are refused.' : 'Warning sent. The user sees it under the bell in their dashboard.');
     render();
   } else if (f.dataset.form === 'resolve') {
     const v = f.wh.value.trim();

@@ -50,6 +50,9 @@ const S = {
   notice: null,
   meterBSeen: 0, // last raw METER_B firmware telemetry (Stage 5B.2)
   meterBTamper: null, // Stage 6.1: tamper flag in METER_B firmware telemetry (null until seen)
+  meterBLive: null, // Stage 6.2: METER_B's own live trade count, when its telemetry has one { tradeId, wh, at }
+  suspended: new Set(), // Stage 6.2: user ids the operator suspended (app/notice/<id> "suspended": true)
+  refused: null, // last request refused because the account is suspended { user, at }
   lastTradeEnd: 0, // the firmware may still report the buyer request for a moment after STOP
   fwBusy: false, // Stage 5B: METER_A still runs a trade this backend does not track (left from a restart)
   orphanStopAt: 0,
@@ -90,7 +93,7 @@ async function sellerApproved() {
 }
 
 // Subscribe to the evidence topics BEFORE any command can be sent (Faras's checklist, step 1).
-const subs = [topics.telemetry('METER_A'), topics.telemetry('METER_B'), topics.appRequest, topics.appDemo, topics.readingAll, topics.finalAll];
+const subs = [topics.telemetry('METER_A'), topics.telemetry('METER_B'), topics.appRequest, topics.appDemo, topics.readingAll, topics.finalAll, topics.noticeAll];
 const { publish } = connect('relayer', subs, async (topic, msg) => {
   if (topic === topics.telemetry('METER_A')) {
     S.grid = msg.grid;
@@ -111,9 +114,26 @@ const { publish } = connect('relayer', subs, async (topic, msg) => {
       log(`METER_B firmware reports tamper ${msg.tamper ? 'ON' : 'off'}`);
       await publishStatus();
     }
+    // Stage 6.2: METER_B's live trade count, only when its telemetry carries one for the running trade
+    if (msg.tradeId != null && Number.isFinite(Number(msg.tradeWh))) S.meterBLive = { tradeId: String(msg.tradeId), wh: Number(msg.tradeWh), at: Date.now() };
+    if (S.active) await liveGuard(S.active);
+    return undefined;
+  }
+  if (topic.startsWith(topics.noticeAll.slice(0, -1))) {
+    const id = topic.slice(topics.noticeAll.length - 1).toLowerCase();
+    const was = S.suspended.has(id);
+    if (msg?.suspended === true) S.suspended.add(id); else S.suspended.delete(id);
+    if (was !== S.suspended.has(id)) log(`operator ${S.suspended.has(id) ? 'SUSPENDED' : 'lifted the suspension of'} user ${id}`);
     return undefined;
   }
   if (topic === topics.appRequest && typeof msg.requesting === 'boolean') {
+    const user = msg.requesting ? cleanUser(msg.user) : null;
+    if (user && S.suspended.has(user.id)) {
+      // Stage 6.2: a suspended account cannot open trades (the operator lifts it in Reports)
+      S.refused = { user, at: Date.now() };
+      log(`app: request from ${user.name || user.id} REFUSED: account suspended by the operator`);
+      return publishStatus();
+    }
     if (msg.requesting) S.appTargetWh = msg.targetWh == null ? null : clampOrder(msg.targetWh, Number(TRADE.maxWh), ORDER_RATE);
     if (msg.requesting) S.appUser = cleanUser(msg.user);
     log(`app: shop ${msg.requesting ? `requests clean power${S.appTargetWh ? ` (order ${S.appTargetWh} Wh)` : ''}` : 'stops'}`);
@@ -182,6 +202,7 @@ async function trackOrder(msg) {
   if (sellerWh === null) return;
   a.liveSellerWh = sellerWh;
   a.liveBuyerWh = receivedEstimate(sellerWh, SIM.lineLoss);
+  if (FIVE_B && (await liveGuard(a))) return;
   if (a.stopAtWh && !a.stopping && (orderReached(a.liveBuyerWh, a.stopAtWh, ORDER_RATE) || Date.now() > a.stopDeadline)) {
     log(`trade ${a.id}: shop's stop reached at about ${a.liveBuyerWh.toFixed(2)} Wh received -> STOP`);
     return stop5b(a, 'shop stopped requesting');
@@ -194,6 +215,40 @@ async function trackOrder(msg) {
     else await stop('order reached');
   }
 }
+
+// ================================================================== Stage 6.2: live tamper guard
+// The final check only runs after STOP, so a cheating meter would still receive the whole order. While the trade runs
+// the relayer watches METER_B: its tamper flag, or its own live count when the telemetry has one. On a mismatch it
+// stops the supply at once (the seller's battery stops paying for it), marks the trade "suspect" and keeps the evidence;
+// the final readings are still checked as usual (Rejected, or Disputed on testnet).
+const LIVE_GUARD = { minWh: 1, holdS: 3, absWh: 0.5 };
+async function liveGuard(a) {
+  if (!FIVE_B || !a || a.stopping || a.suspect || a.status !== T.ACTIVE) return false;
+  let why = null;
+  if (S.meterBTamper === true) why = 'METER_B reports its tamper switch on';
+  else {
+    const b = S.meterBLive;
+    const exp = a.liveBuyerWh ?? 0;
+    if (b && b.tradeId === String(a.id) && Date.now() - b.at < 5000 && b.wh > 0 && (a.liveSellerWh ?? 0) >= LIVE_GUARD.minWh) {
+      const gap = exp > 0 ? (exp - b.wh) / exp : 0;
+      if (gap * 10000 > SIM.toleranceBps && exp - b.wh > LIVE_GUARD.absWh) {
+        a.gapSince ??= Date.now();
+        if (Date.now() - a.gapSince >= LIVE_GUARD.holdS * 1000) why = `METER_B counts ${(gap * 100).toFixed(1)}% less than METER_A while the power flows`;
+      } else a.gapSince = null;
+    }
+  }
+  if (!why) return false;
+  a.suspect = { reason: why, atWh: Math.round((a.liveBuyerWh ?? 0) * 100) / 100, at: Date.now() };
+  setStatus(a, a.status, { suspect: a.suspect });
+  S.appRequest = false; // no new trade opens for this request
+  S.needRelease = false;
+  log(`trade ${a.id}: SUSPECTED TAMPER (${why}) at about ${a.suspect.atWh} Wh received -> STOP to protect the seller's battery`);
+  await stop5b(a, `suspected tamper: ${why}`);
+  return true;
+}
+/** Why the final mismatch looks like tampering (live guard, or the tamper flag in METER_B's final), else null. */
+const tamperNote = (rec) => (rec.suspect ? `suspected tamper on METER_B (${rec.suspect.reason})`
+  : rec.finals.buyer?.tamper === true ? 'suspected tamper on METER_B (tamper flag in its final reading)' : null);
 
 /**
  * Stage 6, shop presses Stop: with a real-time counter, keep the supply on until the buyer's estimate passes the next
@@ -363,15 +418,19 @@ async function verify5b(rec) {
   });
   rec.verify = r;
   if (!r.ok) {
-    if (TESTNET && isDisagreement(rec, r, maxWh)) {
+    const dispute = TESTNET && isDisagreement(rec, r, maxWh);
+    const why = tamperNote(rec);
+    if (why) rec.verify = { ...r, reason: `${why}: ${r.reason}` };
+    const reason = why ? `${why}: ${r.reason}` : r.reason;
+    if (dispute) {
       // Stage 6.1 tamper: the meters disagree by more than 3% on their exact readings. On testnet both signed readings
       // still go to the contract, which freezes the deposit as Disputed (only the arbiter can release it). Rejecting
       // here instead would refund the full deposit after expiry, which rewards the side that tampered.
       const { seller, buyer } = rec.finals;
       rec.verify = { ...r, int: { sellerWh: toContractWh(seller.wh), buyerWh: toContractWh(buyer.wh) } };
-      return requestSignatures(rec, `${r.stage} check: ${r.reason}: both signed readings go to the contract, which freezes the deposit`);
+      return requestSignatures(rec, `${r.stage} check: ${reason}: both signed readings go to the contract, which freezes the deposit`);
     }
-    return close5b(rec, T.REJECTED, { reason: `${r.stage} check: ${r.reason}` });
+    return close5b(rec, T.REJECTED, { reason: `${r.stage} check: ${reason}` });
   }
   if (!TESTNET) return close5b(rec, T.SIMULATION_VERIFIED, { reason: `${r.reason}; SETTLEMENT_MODE=off, nothing sent on-chain` });
   return requestSignatures(rec, `${r.reason}: asking both gateways to sign`);
@@ -461,6 +520,7 @@ const summary = (rec) => ({
   targetWh: rec.targetWh ?? null,
   maxWh: rec.maxWh ?? null,
   user: rec.user ?? null,
+  suspect: rec.suspect ?? null,
   openTx: rec.openTx,
   settleTx: rec.settleTx ?? null,
   finals: {
@@ -599,12 +659,14 @@ async function publishStatus() {
     escrow: chain.escrow,
     grid: S.grid,
     requests: { app: S.appRequest, wokwi: S.wokwiRequest },
-    active: a ? { id: a.id, source: a.source, user: a.user ?? null, openTx: a.openTx, approvals: a.approvals, stopping: a.stopping, status: a.status ?? null, targetWh: a.targetWh ?? null, maxWh: a.maxWh ?? null, liveSellerWh: a.liveSellerWh ?? null, liveBuyerWh: a.liveBuyerWh ?? null, stopAtWh: a.stopAtWh ?? null, sellerWh: FIVE_B ? a.finals?.seller?.wh ?? null : a.seller?.wh ?? null, buyerWh: FIVE_B ? a.finals?.buyer?.wh ?? null : a.buyer?.wh ?? null } : null,
+    active: a ? { id: a.id, source: a.source, user: a.user ?? null, suspect: a.suspect ?? null, openTx: a.openTx, approvals: a.approvals, stopping: a.stopping, status: a.status ?? null, targetWh: a.targetWh ?? null, maxWh: a.maxWh ?? null, liveSellerWh: a.liveSellerWh ?? null, liveBuyerWh: a.liveBuyerWh ?? null, stopAtWh: a.stopAtWh ?? null, sellerWh: FIVE_B ? a.finals?.seller?.wh ?? null : a.seller?.wh ?? null, buyerWh: FIVE_B ? a.finals?.buyer?.wh ?? null : a.buyer?.wh ?? null } : null,
     lastResult: S.lastResult,
     notice: S.notice ?? (FIVE_B && S.wokwiRequest && !S.appRequest && !a && Date.now() - S.lastTradeEnd > 3000 ? 'Buyer button pressed in Wokwi/Unity: in Stage 5B trades start only from the app (the firmware needs the escrow id)' : null),
     wokwiControl: Object.fromEntries(Object.entries(WOKWI_CONTROL).map(([k, v]) => [k, Boolean(v.topic)])),
     stage5b: { evidence: STAGE5B.evidence, settlementMode: STAGE5B.settlementMode, label: TESTNET ? LABEL_TESTNET : null, minSettleWh: STAGE5B.minSettleWh, targetW: STAGE5B.targetW, meterBFirmwareSeen: S.meterBSeen || null },
     controls: { tamper: tamperAvailable },
+    refused: S.refused,
+    params2: { liveGuard: LIVE_GUARD },
     meterB: { seen: S.meterBSeen || null, tamper: S.meterBTamper },
     trades: FIVE_B ? recent() : [],
     params: { timeScale: SIM.timeScale, lineLoss: SIM.lineLoss, minSocPct: c.minSocBps / 100, toleranceBps: SIM.toleranceBps, maxWh: Number(TRADE.maxWh), maxOrderWh: Number(TRADE.maxWh), orderRate: ORDER_RATE },

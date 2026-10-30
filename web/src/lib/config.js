@@ -19,6 +19,9 @@ export const topics = {
   // operator warnings to one user (retained, one message per user): app/notice/<user key>
   notice: (userKey) => `${P}app/notice/${userKey}`,
   noticeAll: `${P}app/notice/+`,
+  // case status of a reviewed trade, without the warning text (the seller sees that the buyer was flagged)
+  tradeCase: (id) => `${P}app/case/${id}`,
+  caseAll: `${P}app/case/+`,
 };
 
 export const METER = { seller: 'METER_A', buyer: 'METER_B' };

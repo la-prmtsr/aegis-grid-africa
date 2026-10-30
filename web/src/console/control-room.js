@@ -144,20 +144,11 @@ export function ctlToggles() {
 
 export function ctlFoot() {
   const m = metrics();
-  const be = state.backend;
-  const wc = be?.wokwiControl;
-  const chips = wc
-    ? Object.entries({ buyer: 'Buyer', outage: 'Outage', backup: 'Backup', pv: 'PV', load: 'Load', ...('tamper' in wc ? { tamper: 'Tamper B' } : {}) })
-      .map(([k, l]) => `<span class="pill ${wc[k] ? 'ok' : 'idle'}">${l}</span>`).join('')
-    : '<span class="pill idle">relayer not running</span>';
   return `<div class="cr-strip">
       <div><span>Battery SoC</span><b class="mono">${m ? `${m.soc.toFixed(1)}%` : '–'}</b></div>
       <div><span>Battery reserve</span><b class="mono">${m ? m.reserve : 5}%</b></div>
       <div><span>Applied PV</span><b class="mono">${m ? W(m.pv) : '–'}</b></div>
       <div><span>Status</span>${m ? `<span class="pill ${statusTone(m.energyStatus)}">${esc(m.energyStatus)}</span>` : '<b>–</b>'}</div>
-    </div>
-    <div class="cr-remote" title="Green = the backend forwards this control to Wokwi (demo/control/…). Grey = not configured yet, so it only acts on the mock. Buyer requests always open the trade on-chain first.">
-      <span class="cr-label">Wokwi remote</span><div class="cr-chips">${chips}</div>
     </div>`;
 }
 

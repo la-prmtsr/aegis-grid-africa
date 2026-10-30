@@ -911,3 +911,35 @@ tr.rc-link:hover td{background:#F6F8FA}
 .brand{white-space:nowrap}
 @media (max-width:760px){ .rep-kpis{grid-template-columns:repeat(3,minmax(0,1fr));gap:8px} .rep-kpis .kpi .ic,.rep-kpis .kpi em{display:none} .rep-kpis .kpi{padding:12px} .rep-kpis .kpi b{font-size:22px} }
 @media (max-width:420px){ .bell{width:34px;height:34px} .top-r{gap:4px} }
+/* Stage 6.2: live tamper, suspension, resolve */
+.live-pill{display:inline-flex;align-items:center;gap:6px}
+.live-pill i{width:7px;height:7px;border-radius:50%;background:currentColor;animation:live-blink 1s ease-in-out infinite}
+@keyframes live-blink{50%{opacity:.25}}
+.rep-t.live{border-color:#FCA5A5;background:#FFF1F1}
+.rep-t-wrap{display:grid;gap:6px;align-content:start}
+.rep-resolve{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.rep-resolve small{flex-basis:100%;color:var(--muted);font-size:11.5px}
+.rep-actions{display:flex;flex-wrap:wrap;gap:8px}
+.btn.danger{color:var(--alert);border-color:#FCA5A5}
+.suspect-card{background:var(--alert-soft);border:1px solid #FCA5A5;border-radius:14px;padding:14px 16px;color:#7F1D1D}
+.suspect-card b{display:block;margin-bottom:4px}
+.suspect-card p{margin:0;font-size:13.5px}
+@media (prefers-reduced-motion:reduce){ .live-pill i{animation:none} }
+
+
+/* overview hero: Energy intelligence (cumulative energy settled on-chain) */
+.kpi.hero.ei{display:flex;flex-direction:column;gap:0}
+.ei-h{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:14px}
+.ei-t{display:inline-flex;align-items:center;gap:8px;font:700 15px var(--f-display);color:#fff!important}
+.ei-t svg{width:18px;height:18px}
+.ei-pill{display:inline-flex;align-items:center;gap:6px;font:600 12px var(--f-display);color:#fff!important;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.28);border-radius:999px;padding:7px 12px}
+.ei-pill svg{width:14px;height:14px}
+.kpi.hero .ei-l{font-size:13px}
+.kpi.hero b.ei-v{display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 10px;font-size:clamp(30px,3vw,40px);margin-top:4px;letter-spacing:-.02em}
+.kpi.hero b.ei-v small{font:500 13px var(--f-display);letter-spacing:0}
+.ei-chart{display:block;width:100%;height:auto;margin:12px 0 4px;flex:1;min-height:110px}
+.ei-empty{margin:auto 0;color:rgba(255,255,255,.8);font-size:13px}
+.ei-foot{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;border-top:1px solid rgba(255,255,255,.3);padding-top:12px;margin-top:6px}
+.ei-foot span{display:block;font-size:12px}
+.ei-foot b{font-size:20px!important;margin:2px 0 0!important;color:#fff}
+@media (max-width:420px){ .brand{font-size:15px;gap:6px} .brand svg{width:22px;height:22px} .viewas select{padding-left:10px;padding-right:24px;font-size:12.5px} button.live{padding:8px 4px} }

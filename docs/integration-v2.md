@@ -76,7 +76,8 @@ All topics start with `aegis-grid/ag-sakarya26/`.
 | `trade/<id>/reading/seller` and `/buyer` | meters → relayer, dashboard | signed final readings, retained |
 | `backend/status` | relayer → dashboard | retained: active trade, approvals, last result, notices |
 | `app/request` | dashboard → relayer | `{ "requesting": true, "targetWh": 20, "user": { "id", "name", "phone" } }` or `{ "requesting": false }`. `user` = the signed-in account (wallet address, first name, masked phone); the relayer stores it with the trade (`backend/status` `trades[].user`, `active.user`) so each user sees only their own receipts |
-| `app/notice/<user id>` | operator dashboard → that user | retained `{ "warnings": [{ "id", "at", "message", "tradeIds" }] }`: warnings from **Operator → Reports**, shown under the user's bell |
+| `app/notice/<user id>` | operator dashboard → that user | retained `{ "warnings": [{ "id", "at", "message", "tradeIds" }], "suspended": true \| false }`: warnings from **Operator → Reports**, shown under the user's bell. The relayer also reads it: requests from a suspended user are refused (`backend/status` `refused`) |
+| `app/case/<trade id>` | operator dashboard → sellers | retained `{ "status": "flagged" \| "suspended", "at" }`: the outcome of a reviewed trade, without the warning text, for the seller's notifications |
 | `app/demo` | dashboard → relayer, Meter B, mock | `outage`, `backup` (sent from the **Seller** page: the battery owner's choice), `tamper`, `pvW`, `communityLoadW`, `engine` (mock only) |
 
 ## How the energy is counted (`AEGIS_EVIDENCE=gateway`, older Stage 4E firmware)
@@ -205,6 +206,36 @@ trade counter `p2p_trade_wh` runs, set with `FIRMWARE_ENERGY_SCALE` in `.env`:
   `backend/status` shows it as `active.stopAtWh`, the buyer card as "Stopping at … Wh".
 - In `wokwi-final` mode the "battery model runs at about Nx" line is information only: trades are billed from the
   firmware's counter, so it no longer says MISMATCH.
+
+## Stage 6.2: live tamper guard, notifications and suspension
+
+The Stage 6.1 check only runs on the final readings, after STOP, so a tampered meter still received the whole order.
+The relayer now also watches METER_B **while the power flows** (`liveGuard()` in `relayer.js`, every METER_A report):
+
+- METER_B telemetry says `"tamper": true`, **or** METER_B's own live count (`tradeId` + `tradeWh` in its telemetry,
+  used only when present) is more than 3% and 0.5 Wh below METER_A's estimate for 3 s (after the first 1 Wh);
+- then the relayer sends STOP at once, so the seller's battery stops supplying a suspicious meter, stores
+  `suspect: { reason, atWh, at }` with the trade (evidence file, `backend/status` `trades[].suspect`, `active.suspect`)
+  and stops the shop's request. The final readings are still checked as usual; the reason then starts with
+  "suspected tamper on METER_B". A trade stopped early can still settle when both finals agree (the shop pays only for
+  what its meter received before the stop); it stays flagged for the operator.
+
+**Who is told what** (dashboard bell + pop-up):
+
+| | When the guard stops the trade | After the final check | After the operator's review |
+|---|---|---|---|
+| Buyer | "Supply stopped": neutral, no accusation | rejected / disputed, with the gap | the warning text; at 3 warnings "account suspended" |
+| Seller (battery owner) | "Supply to the shop stopped to protect your battery; payment on hold" | not paid / on hold / paid | "buyer flagged" or "buyer suspended" (no warning text) |
+| Operator | "Suspected tamper on trade #n" + the trade in **Reports** with a **Live** badge | mismatch report | warns, suspends or lifts; pays the seller (below) |
+
+**Suspension:** the third warning suspends the account (or **Suspend now** in Reports). The relayer refuses that
+user's requests until the operator presses **Lift suspension**.
+
+**Paying the seller (SETTLEMENT_MODE=testnet):** a tampered trade with enough energy (≥ `MIN_SETTLEMENT_WH`) is Disputed
+on-chain. In **Reports** the contract owner (deployer wallet, testnet only, connected in MetaMask) presses
+**Pay seller for N Wh** (`resolveDispute(id, N)`, N = METER_A's reading minus the 2% cable loss) or **Refund buyer**
+(`resolveDispute(id, 0)`). With `SETTLEMENT_MODE=off` the backend can only reject, so the seller is not paid; Reports
+says so.
 
 ## Stage 6.1: tamper (the buyer under-reports)
 
