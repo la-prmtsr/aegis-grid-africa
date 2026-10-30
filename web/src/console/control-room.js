@@ -135,7 +135,7 @@ export function ctlToggles() {
   return `<div class="cr-label">Scenario</div><div class="cr-tiles">
     ${tile('t-outage', 'outage', 'Utility outage', m?.outage ? 'Islanded' : 'Off', !!m?.outage, 'red', none, 'Opens the PCC: the street runs on the battery only')}
     ${tile('t-request', 'request', 'Buyer request', requesting ? (tradeId ? `Trade #${tradeId}` : 'Opening…') : 'Off', requesting, 'blue', none, 'UMKM B requests its order (Wh): the backend opens a trade on-chain and stops it at the order')}
-    ${tile('t-backup', 'backup', 'Emergency backup', m?.backup ? 'On' : 'Off', !!m?.backup, 'green', none, 'Resident A lets the battery also feed the community loads')}
+    ${tile('t-backup', 'backup', 'Emergency backup', m?.backup ? 'On · seller' : 'Off · seller', !!m?.backup, 'green', true, 'The battery owner decides this on the Seller page (My battery): only Resident A can let the battery feed the community loads')}
     ${be?.controls?.tamper === false
       ? tile('t-tamper', 'tamper', 'Tamper Meter B', 'In Wokwi', false, 'amber', true, 'Not configured: add WOKWI_CTRL_TAMPER_TOPIC=meter_b_tamper, WOKWI_CTRL_TAMPER_ON=1 and WOKWI_CTRL_TAMPER_OFF=0 to .env and restart the backend. METER_B runs in Faras’s Wokwi; the backend never alters a meter value.')
       : tile('t-tamper', 'tamper', 'Tamper Meter B', tamperOn ? '−40%' : 'Off', tamperOn, 'amber', !b && be?.meterB?.tamper == null, 'Meter B under-reports by 40%: the readings disagree, so the contract freezes the deposit (Disputed; Rejected when SETTLEMENT_MODE=off)')}
@@ -197,5 +197,5 @@ export function quickHTML() {
       ${row('Energy status', m ? `<span class="pill ${statusTone(m.energyStatus)}">${esc(m.energyStatus)}</span>` : '–')}
     </div>
     <button class="btn btn-dark" type="button" data-act="go-control" style="width:100%;margin-top:14px">Open control room</button>
-    <p class="note">All simulation controls (PV, load, outage, buyer request, emergency backup, engine) are in the control room. Unity only visualises.</p>`;
+    <p class="note">Simulation controls (PV, load, outage, buyer request, tamper, engine) are in the control room; emergency backup is the battery owner's choice on the Seller page. Unity only visualises.</p>`;
 }

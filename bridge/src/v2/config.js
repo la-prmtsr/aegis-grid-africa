@@ -103,10 +103,17 @@ const ctrl = (key) => ({
   off: env[`WOKWI_CTRL_${key}_OFF`] || '',
   value: env[`WOKWI_CTRL_${key}_VALUE`] || '',
 });
+/** A control with a confirmed default format: used when .env leaves it empty; WOKWI_CTRL_<KEY>_TOPIC=none turns it off. */
+const ctrlDefault = (key, def) => {
+  const c = ctrl(key);
+  if (c.topic === 'none') return { ...c, topic: '' };
+  return c.topic ? c : { ...c, ...def };
+};
 export const WOKWI_CONTROL = {
   buyer: ctrl('BUYER'), outage: ctrl('OUTAGE'), backup: ctrl('BACKUP'), pv: ctrl('PV'), load: ctrl('LOAD'),
-  // Stage 5B: tamper switch of Faras's METER_B firmware (the backend itself never alters a meter value)
-  tamper: ctrl('TAMPER'),
+  // Stage 5B: tamper switch of Faras's METER_B firmware (the backend itself never alters a meter value).
+  // Faras's firmware listens on demo/control/meter_b_tamper (1 / 0), so that is the default.
+  tamper: ctrlDefault('TAMPER', { topic: 'meter_b_tamper', on: '1', off: '0' }),
 };
 
 // Chain settings are read lazily, so the monitoring parts run without a wallet.

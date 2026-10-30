@@ -1,3 +1,4 @@
+
 // Reads settings from the .env file in the repository root (one folder up from bridge/).
 import { config as loadEnv } from 'dotenv';
 import { fileURLToPath } from 'node:url';

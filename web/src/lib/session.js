@@ -110,6 +110,19 @@ export function setSession(s) { write(SESSION_KEY, { ...s, at: Date.now() }); }
 export function updateSession(patch) { const s = getSession(); if (s) setSession({ ...s, ...patch }); }
 export function clearSession() { try { localStorage.removeItem(SESSION_KEY); } catch { /* ignore */ } }
 
+/**
+ * Short, stable key for the signed-in user: the wallet address (every account has one), else the phone digits.
+ * Used to tag the user's trades (app/request "user") and their operator warnings (app/notice/<key>).
+ */
+export function userKey(s) {
+  if (!s) return '';
+  if (s.address) return String(s.address).toLowerCase();
+  const d = String(s.phone || '').replace(/\D/g, '');
+  return d ? `tel${d}` : '';
+}
+/** What the backend stores about who asked for power: the key, a first name and a masked phone, nothing else. */
+export const requesterOf = (s) => (userKey(s) ? { id: userKey(s), name: String(s.name || '').split(' ')[0] || null, phone: s.phone ? maskPhone(s.phone) : null } : null);
+
 export const initials = (name) => String(name || '?').trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join('').toUpperCase() || '?';
 
 export const METHOD_LABEL = { password: 'Aegis account', momo: 'MoMo (simulated)', wallet: 'Browser wallet', operator: 'Operator (demo account)' };

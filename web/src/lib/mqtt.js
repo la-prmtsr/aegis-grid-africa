@@ -4,6 +4,27 @@ import { MQTT_WS_URL, SITE, topics, METER } from './config.js';
 import { state, update } from './store.js';
 
 let client = null;
+let requester = null; // { id, name, phone } of the signed-in user, sent with every app request
+let noticeTopics = []; // operator warnings: the user's own topic, or all of them for the operator
+
+/** Who is using this dashboard: tags the user's requests, and picks which operator warnings to receive. */
+export function setRequester(user, { operator = false } = {}) {
+  requester = user || null;
+  noticeTopics = operator ? [topics.noticeAll] : requester ? [topics.notice(requester.id)] : [];
+  if (client?.connected && noticeTopics.length) client.subscribe(noticeTopics);
+}
+
+/**
+ * Operator: warn a user (retained, so the user sees it next time they open the dashboard). The whole list of
+ * warnings for that user is republished. PROTOTYPE: anyone on the public broker could publish here; production sends
+ * warnings from the backend to an authenticated account.
+ */
+export function publishNotice(userKey, notice) {
+  if (!client || !client.connected || !userKey) return false;
+  client.publish(topics.notice(userKey), JSON.stringify(notice), { qos: 1, retain: true });
+  update({ notices: { ...state.notices, [userKey]: notice } });
+  return true;
+}
 const HISTORY_MAX = 300; // ~5 minutes at 1 Hz
 
 export function startMqtt() {
@@ -15,7 +36,7 @@ export function startMqtt() {
 
   client.on('connect', () => {
     update({ mqtt: 'online' });
-    client.subscribe([topics.grid, topics.telemetryAll, topics.readingAll, topics.backendStatus]);
+    client.subscribe([topics.grid, topics.telemetryAll, topics.readingAll, topics.backendStatus, ...noticeTopics]);
   });
   client.on('reconnect', () => update({ mqtt: 'connecting' }));
   client.on('offline', () => update({ mqtt: 'offline' }));
@@ -28,6 +49,9 @@ export function startMqtt() {
 
     if (topic === topics.backendStatus) {
       update({ backend: msg });
+    } else if (topic.startsWith(topics.notice(''))) {
+      const key = topic.slice(topics.notice('').length);
+      update({ notices: { ...state.notices, [key]: msg } });
     } else if (topic === topics.grid) {
       update({ grid: msg.status === 'OUTAGE' ? 'OUTAGE' : 'AVAILABLE' });
     } else if (topic === topics.telemetry(METER.seller)) {
@@ -88,7 +112,8 @@ export function simControl(patch) {
   if (!client || !client.connected) return false;
   const { requesting, targetWh, ...demo } = patch;
   // Stage 6: a request carries the buyer's order (Wh to receive); the backend sizes the escrow from it
-  if (typeof requesting === 'boolean') client.publish(topics.appRequest, JSON.stringify(requesting && targetWh ? { requesting, targetWh } : { requesting }), { qos: 1 });
+  // per-user receipts: the request also says who asked (the backend stores it with the trade)
+  if (typeof requesting === 'boolean') client.publish(topics.appRequest, JSON.stringify(requesting ? { requesting, ...(targetWh ? { targetWh } : {}), ...(requester ? { user: requester } : {}) } : { requesting }), { qos: 1 });
   if (Object.keys(demo).length) client.publish(topics.appDemo, JSON.stringify(demo), { qos: 1 });
   return true;
 }

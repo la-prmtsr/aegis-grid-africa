@@ -42,6 +42,7 @@ const S = {
   wokwiRequest: false,
   appRequest: false,
   appTargetWh: null, // Stage 6: the buyer's order (Wh to receive), from app/request
+  appUser: null, // who pressed Get power: { id, name, phone } from app/request (per-user receipts in the dashboard)
   busy: false,
   needRelease: false, // after a trade ends, the request must be released before a new one opens
   active: null, // the trade in progress (both flows)
@@ -114,6 +115,7 @@ const { publish } = connect('relayer', subs, async (topic, msg) => {
   }
   if (topic === topics.appRequest && typeof msg.requesting === 'boolean') {
     if (msg.requesting) S.appTargetWh = msg.targetWh == null ? null : clampOrder(msg.targetWh, Number(TRADE.maxWh), ORDER_RATE);
+    if (msg.requesting) S.appUser = cleanUser(msg.user);
     log(`app: shop ${msg.requesting ? `requests clean power${S.appTargetWh ? ` (order ${S.appTargetWh} Wh)` : ''}` : 'stops'}`);
     S.appRequest = msg.requesting;
     if (!msg.requesting && !FIVE_B) wokwiControl('buyer', false);
@@ -145,6 +147,17 @@ function wokwiControl(kind, input) {
   publish(topics.wokwiControl(m.sub), m.payload);
   log(`Wokwi control ${kind} -> ${label}`);
   return true;
+}
+
+/**
+ * Who asked for power (app/request "user"): the dashboard account, so each user sees only their own receipts and the
+ * operator sees who made every trade. Only a short id (wallet address or phone digits), a first name and a masked phone.
+ */
+function cleanUser(u) {
+  if (!u || typeof u !== 'object') return null;
+  const str = (v, n) => (typeof v === 'string' ? v.trim().slice(0, n) : '');
+  const id = str(u.id, 64).toLowerCase();
+  return id ? { id, name: str(u.name, 40) || null, phone: str(u.phone, 24) || null } : null;
 }
 
 /** Stage 6: trade power, counter speed and cable loss decide the order steps, the stop point and the escrow margin. */
@@ -259,7 +272,7 @@ async function open5b() {
     const { id, txHash } = await c.openTrade(size.maxWh);
     const t = await c.tradeInfo(id, 'None');
     rec = {
-      id, tradeId: String(id), source: 'app', openTx: txHash, openedAt: Date.now(), status: null, ...size, liveSellerWh: 0, liveBuyerWh: 0,
+      id, tradeId: String(id), source: 'app', openTx: txHash, openedAt: Date.now(), status: null, ...size, user: S.appUser, liveSellerWh: 0, liveBuyerWh: 0,
       sellerMeter: t.sellerMeter, buyerMeter: t.buyerMeter, approvals: { buyer: true, seller: true },
       stopping: false, finals: { seller: null, buyer: null }, signed: { seller: null, buyer: null },
       verify: null, label: null, settlementMode: STAGE5B.settlementMode, timer: null, // label set only when a testnet tx is sent
@@ -267,7 +280,7 @@ async function open5b() {
     trades.set(id, rec);
     S.active = rec;
     S.notice = null;
-    setStatus(rec, T.PENDING, { openTx: txHash, targetWh: size.targetWh, maxWh: size.maxWh });
+    setStatus(rec, T.PENDING, { openTx: txHash, targetWh: size.targetWh, maxWh: size.maxWh, user: S.appUser });
     log(`trade ${id} OPENED ${link(txHash)}`);
     // REMOTE mode first, then START with the escrow id. Never a hand-typed test id.
     await command(topics.wokwiControl(STAGE5B.modeTopic), STAGE5B.modeRemote);
@@ -447,6 +460,7 @@ const summary = (rec) => ({
   targetW: rec.targetW ?? null,
   targetWh: rec.targetWh ?? null,
   maxWh: rec.maxWh ?? null,
+  user: rec.user ?? null,
   openTx: rec.openTx,
   settleTx: rec.settleTx ?? null,
   finals: {
@@ -457,7 +471,7 @@ const summary = (rec) => ({
   openedAt: rec.openedAt ?? null,
   updatedAt: rec.updatedAt,
 });
-const recent = () => [...trades.values()].sort((a, b) => b.id - a.id).slice(0, 20).map(summary);
+const recent = () => [...trades.values()].sort((a, b) => b.id - a.id).slice(0, 40).map(summary);
 
 // ================================================================== gateway evidence (older firmware)
 async function open() {
@@ -475,7 +489,7 @@ async function open() {
     const { id, txHash } = await c.openTrade(size.maxWh);
     const t = await c.tradeInfo(id, 'None');
     S.active = {
-      id, source, openTx: txHash, sellerMeter: t.sellerMeter, buyerMeter: t.buyerMeter, ...size, liveSellerWh: 0, liveBuyerWh: 0,
+      id, source, openTx: txHash, sellerMeter: t.sellerMeter, buyerMeter: t.buyerMeter, ...size, user: source === 'app' ? S.appUser : null, liveSellerWh: 0, liveBuyerWh: 0,
       approvals: { buyer: true, seller: true }, stopping: false, seller: null, buyer: null, timer: null,
     };
     S.notice = null;
@@ -585,7 +599,7 @@ async function publishStatus() {
     escrow: chain.escrow,
     grid: S.grid,
     requests: { app: S.appRequest, wokwi: S.wokwiRequest },
-    active: a ? { id: a.id, source: a.source, openTx: a.openTx, approvals: a.approvals, stopping: a.stopping, status: a.status ?? null, targetWh: a.targetWh ?? null, maxWh: a.maxWh ?? null, liveSellerWh: a.liveSellerWh ?? null, liveBuyerWh: a.liveBuyerWh ?? null, stopAtWh: a.stopAtWh ?? null, sellerWh: FIVE_B ? a.finals?.seller?.wh ?? null : a.seller?.wh ?? null, buyerWh: FIVE_B ? a.finals?.buyer?.wh ?? null : a.buyer?.wh ?? null } : null,
+    active: a ? { id: a.id, source: a.source, user: a.user ?? null, openTx: a.openTx, approvals: a.approvals, stopping: a.stopping, status: a.status ?? null, targetWh: a.targetWh ?? null, maxWh: a.maxWh ?? null, liveSellerWh: a.liveSellerWh ?? null, liveBuyerWh: a.liveBuyerWh ?? null, stopAtWh: a.stopAtWh ?? null, sellerWh: FIVE_B ? a.finals?.seller?.wh ?? null : a.seller?.wh ?? null, buyerWh: FIVE_B ? a.finals?.buyer?.wh ?? null : a.buyer?.wh ?? null } : null,
     lastResult: S.lastResult,
     notice: S.notice ?? (FIVE_B && S.wokwiRequest && !S.appRequest && !a && Date.now() - S.lastTradeEnd > 3000 ? 'Buyer button pressed in Wokwi/Unity: in Stage 5B trades start only from the app (the firmware needs the escrow id)' : null),
     wokwiControl: Object.fromEntries(Object.entries(WOKWI_CONTROL).map(([k, v]) => [k, Boolean(v.topic)])),

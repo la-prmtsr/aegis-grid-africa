@@ -16,6 +16,9 @@ export const topics = {
   appRequest: `${P}app/request`, // Buyer Request -> backend relayer
   appDemo: `${P}app/demo`, // demo controls: outage, daylight, tamper, shop load
   backendStatus: `${P}backend/status`, // relayer status (retained)
+  // operator warnings to one user (retained, one message per user): app/notice/<user key>
+  notice: (userKey) => `${P}app/notice/${userKey}`,
+  noticeAll: `${P}app/notice/+`,
 };
 
 export const METER = { seller: 'METER_A', buyer: 'METER_B' };

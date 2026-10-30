@@ -3,9 +3,9 @@
 import { ACCOUNTS, CHAIN, SITE, MQTT_WS_URL, METER, MOMO, IMPACT, txUrl, addrUrl } from '../lib/config.js';
 import { fiat, whToFiat, depositFiat, generatorFiat, realText, scaleNote, momoForTrade } from '../lib/momo.js';
 import { state, subscribe, update, tradeList } from '../lib/store.js';
-import { startMqtt, simControl, meterOnline } from '../lib/mqtt.js';
+import { startMqtt, simControl, meterOnline, setRequester, publishNotice } from '../lib/mqtt.js';
 import { startChain, connectWallet, resumeWallet, useWallet, disconnectWallet, hasWallet, tx, isAddress, same, explain } from '../lib/chain.js';
-import { getSession, clearSession, initials, maskPhone, METHOD_LABEL } from '../lib/session.js';
+import { getSession, clearSession, initials, maskPhone, METHOD_LABEL, userKey, requesterOf } from '../lib/session.js';
 import { money, wh, watts, pct, gapPct, clock, simClock, impact, short, shortHash, esc } from '../lib/format.js';
 import { orderPickerHTML, requestCardHTML, openingCardHTML, liveSessionHTML, closingCardHTML, momoCheckoutHTML, buyerReceiptHTML } from './buyer-session.js';
 import { clampOrder, maxWhFor, receivedEstimate, orderSteps, DEFAULT_RATE } from '../lib/sizing.js';
@@ -23,6 +23,11 @@ const greetName = () => (!session.name ? 'there'
   : session.method === 'wallet' && session.name.startsWith(session.walletName || '\u0000') ? 'there'
   : session.name.split(' ')[0]);
 
+// Per-user data: requests carry who asked, so each user sees only their own trades; the operator sees everyone.
+const me = isOperator ? '' : userKey(session);
+setRequester(isOperator ? null : requesterOf(session), { operator: isOperator });
+const pageLoadedAt = Date.now();
+
 startMqtt();
 startChain();
 if (session.method === 'wallet') resumeWallet(session.rdns); // reconnect without a popup if the wallet allows it
@@ -37,6 +42,8 @@ const ui = {
   receiptId: null, // operator Mobile money: trade whose receipt is shown (null = newest)
   targetWh: Number(localGet('aegis.order', '0')) || null, // Stage 6: buyer's order size (Wh); null = default for the rate
   page: null, // sidebar page shown in the current view (one page at a time, kept in the URL hash)
+  requested: false, // this user pressed Get power (an open request without a trade yet is theirs)
+  warnFor: null, // operator Reports: user key whose warning form is open
 };
 function localGet(k, d) { try { return localStorage.getItem(k) || d; } catch { return d; } }
 function localSet(k, v) { try { localStorage.setItem(k, v); } catch { /* private mode */ } }
@@ -51,7 +58,7 @@ const NAV = {
   buyer: [['b-home', 'Get power'], ['b-history', 'Receipts'], ['b-impact', 'Impact']],
   seller: [['s-node', 'Battery'], ['s-earn', 'Earnings'], ['s-meter', 'Meter']],
   gate: [['g-main', 'Start']],
-  ops: [['o-overview', 'Overview'], ['o-grid', 'Control room'], ['o-oracle', 'Oracle'], ['o-momo', 'Mobile money'], ['o-chain', 'Escrow']],
+  ops: [['o-overview', 'Overview'], ['o-grid', 'Control room'], ['o-oracle', 'Oracle'], ['o-reports', 'Reports'], ['o-momo', 'Mobile money'], ['o-chain', 'Escrow']],
 };
 const ICON = {
   'b-home': '<path d="M13 2 4 14h7l-1 8 9-12h-7l1-8Z"/>',
@@ -65,6 +72,7 @@ const ICON = {
   'o-demo': '<circle cx="12" cy="12" r="9"/><path d="m10 8 6 4-6 4V8Z"/>',
   'o-grid': '<path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/>',
   'o-oracle': '<path d="M12 2 4 5v6c0 5.5 3.4 9.7 8 11 4.6-1.3 8-5.5 8-11V5l-8-3Z"/><path d="m9 12 2 2 4-4"/>',
+  'o-reports': '<path d="M4 22V4"/><path d="M4 4h13l-2 4 2 4H4"/>',
   'o-chain': '<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
   'o-momo': '<rect x="2" y="6" width="20" height="13" rx="2.5"/><path d="M2 10h20"/><path d="M6 15h4"/>',
 };
@@ -150,7 +158,19 @@ const weiFor = (whAmount, price) => (BigInt(Math.round(Number(whAmount) * 1000))
 const fmtWh = (v) => (v == null ? '–' : Number.isInteger(Number(v)) ? String(v) : Number(v).toFixed(2));
 const simLabel = (t) => (backendTrade(t.id)?.label ? '<span class="pill sim" title="Settled on Base Sepolia testnet with gateway-signed readings from the Wokwi simulation. METER_B is derived from METER_A.">Simulated testnet settlement</span>' : '');
 
-const myTrades = (who) => tradeList().filter((t) => same(who === 'buyer' ? t.buyer : t.seller, ACCOUNTS[who].address));
+/** Who asked for a trade (app/request "user", stored by the backend), or null for older trades and Wokwi-button trades. */
+const ownerOf = (id) => backendTrade(id)?.user ?? null;
+const isMine = (t) => !!me && ownerOf(t.id)?.id === me;
+/** Buyer: only the trades this user asked for. Seller: every trade of the demo battery (one battery owner). */
+const myTrades = (who) => (who === 'buyer'
+  ? tradeList().filter((t) => same(t.buyer, ACCOUNTS.buyer.address) && isMine(t))
+  : tradeList().filter((t) => same(t.seller, ACCOUNTS.seller.address)));
+/** The trade or request running now belongs to another user (the battery is busy for this one). */
+function foreignActive() {
+  const a = state.backend?.active;
+  if (a) return a.user?.id && a.user.id !== me ? a : null;
+  return state.backend?.requests?.app && !ui.requested ? { id: null } : null;
+}
 const openTradeFor = (who) => myTrades(who).find((t) => t.status === 'Open' && !closedOffChain(t) && (!t.expiresAt || t.expiresAt * 1000 > Date.now()));
 const withdrawableOf = (addr) => state.withdrawable[addr?.toLowerCase()] ?? null;
 const pricePerWhOf = (t) => (t?.pricePerWh != null ? BigInt(t.pricePerWh) : null);
@@ -192,7 +212,7 @@ function patch(id, html) {
   const els = document.querySelectorAll(`[data-part="${id}"]`);
   if (!els.length || parts.get(id) === html) return;
   const a = document.activeElement;
-  if (a && [...els].some((el) => el.contains(a)) && (a.tagName === 'INPUT' || a.tagName === 'SELECT')) return;
+  if (a && [...els].some((el) => el.contains(a)) && (a.tagName === 'INPUT' || a.tagName === 'SELECT' || a.tagName === 'TEXTAREA')) return;
   els.forEach((el) => { el.innerHTML = html; });
   parts.set(id, html);
 }
@@ -215,6 +235,7 @@ function render() {
   renderHeader();
   ({ buyer: buyerParts, seller: sellerParts, gate: gateParts, ops: opsParts })[k]();
   if (fresh) showPage();
+  syncNotes();
 }
 
 function renderNav(k) {
@@ -382,7 +403,13 @@ function buyerParts() {
   const rd = tradeId ? state.readings[tradeId] || {} : {};
   let html;
   const requesting = buyer?.requesting || state.backend?.requests?.app;
-  if (requesting && !tradeId) {
+  const busy = foreignActive() || (tradeId && ownerOf(tradeId) && ownerOf(tradeId).id !== me && t?.status === 'Open' && !closedOffChain(t) ? { id: tradeId } : null);
+  if (!requesting && !state.backend?.active) ui.requested = false;
+  if (busy) {
+    html = `<div class="ph"><h2>Get power</h2><span class="pill warn">Battery busy</span></div>
+      <p style="margin:0;color:var(--muted)">Another shop on this feeder is using the shared battery right now${busy.id ? ` (trade #${busy.id})` : ''}. You can order as soon as it finishes; this card updates by itself.</p>
+      <div class="flowbar" aria-hidden="true" style="margin:16px 0 4px"><i></i></div>`;
+  } else if (requesting && !tradeId) {
     html = openingCardHTML({ targetWh: state.backend?.requests?.app ? orderWh() : null });
   } else if (tradeId && (requesting || buyer?.status === 'RECEIVING')) {
     const price = pricePerWhOf(t);
@@ -438,8 +465,9 @@ function buyerParts() {
 
   // --- last receipt
   const closed = myTrades('buyer').filter((x) => x.status !== 'Open' || closedOffChain(x));
-  patch('b-receipt', closed.length ? receiptHTML(closed[0]) : `<div class="ph"><h2>Last receipt</h2></div><p class="empty">Your receipt appears here after a trade settles: both meter readings, the split and the transaction.</p>`);
+  patch('b-receipt', closed.length ? receiptHTML(closed[0]) + `<button class="btn btn-line" type="button" data-act="receipt" data-id="${closed[0].id}" style="width:100%;margin-top:12px">Open the full receipt</button>` : `<div class="ph"><h2>Last receipt</h2></div><p class="empty">Your receipt appears here after your first trade: both meter readings, the split and the transaction.</p>`);
   patch('b-list', tradesTable(myTrades('buyer'), 'buyer'));
+  drawerParts(myTrades('buyer'));
 
   const deliveredMine = myTrades('buyer').filter((x) => x.status === 'Settled').reduce((a, x) => a + (x.deliveredWh || 0), 0);
   const im = impact(deliveredMine * MOMO.demoScale);
@@ -491,12 +519,12 @@ function momoBlock(t) {
 function tradesTable(list, who) {
   if (!state.historyLoaded && state.chain !== 'offline') return `<p class="empty">Loading trades from the contract…</p>`;
   if (state.chain === 'offline' && !list.length) return `<p class="empty">Cannot reach the chain right now (${esc(state.chainError || 'RPC offline')}). Retrying.</p>`;
-  if (!list.length) return `<p class="empty">No trades yet.</p>`;
+  if (!list.length) return `<p class="empty">${who === 'buyer' ? 'No trades yet. Your receipts appear here after you order power.' : 'No trades yet.'}</p>`;
   const rows = list.slice(0, 30).map((t) => {
     const { sellerWh, buyerWh } = readingsOf(t);
     const gap = sellerWh != null && buyerWh != null ? gapPct(sellerWh, buyerWh) : null;
     const amount = t.status === 'Settled' ? (who === 'seller' ? t.sellerShare : t.amount) : null;
-    return `<tr class="${t.status === 'Disputed' ? 'flag' : ''}">
+    return `<tr class="${t.status === 'Disputed' ? 'flag' : ''} rc-link" data-act="receipt" data-id="${t.id}" tabindex="0" title="Open the receipt of trade #${t.id}">
       <td data-label="Trade" class="mono">#${t.id}</td>
       <td data-label="Opened">${clock(t.openTime)}</td>
       <td data-label="Order" class="num">${backendTrade(t.id)?.targetWh ?? '–'}</td>
@@ -505,9 +533,10 @@ function tradesTable(list, who) {
       <td data-label="Difference" class="num">${gap == null ? '–' : gap.toFixed(1) + '%'}</td>
       <td data-label="${who === 'seller' ? 'Your share' : 'Paid'}" class="num">${amount != null ? money(amount) : '–'}</td>
       <td data-label="Status"><span class="pill ${resultOf(t)[0]}">${resultOf(t)[1]}</span></td>
-      <td data-label="Tx">${(t.settleTx || t.openTx) ? `<a class="ext" href="${txUrl(t.settleTx || t.openTx)}" target="_blank" rel="noopener">${shortHash(t.settleTx || t.openTx)}</a>` : '–'}</td></tr>`;
+      <td data-label="Tx">${(t.settleTx || t.openTx) ? `<a class="ext" href="${txUrl(t.settleTx || t.openTx)}" target="_blank" rel="noopener">${shortHash(t.settleTx || t.openTx)}</a>` : '–'}</td>
+      <td class="rc-go" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></td></tr>`;
   }).join('');
-  return `<div class="tbl-wrap"><table><thead><tr><th>Trade</th><th>Opened</th><th class="num">Order (Wh)</th><th class="num">Seller sent (Wh)</th><th class="num">Shop received (Wh)</th><th class="num">Difference</th><th class="num">${who === 'seller' ? 'Your share' : 'Paid'}</th><th>Status</th><th>Tx</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  return `<div class="tbl-wrap"><table><thead><tr><th>Trade</th><th>Opened</th><th class="num">Order (Wh)</th><th class="num">Seller sent (Wh)</th><th class="num">Shop received (Wh)</th><th class="num">Difference</th><th class="num">${who === 'seller' ? 'Your share' : 'Paid'}</th><th>Status</th><th>Tx</th><th><span class="sr-only">Receipt</span></th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
 // ================================================================== SELLER
@@ -521,6 +550,7 @@ function sellerSkeleton() {
       <div class="panel hero-panel" data-part="s-battery"></div>
       <div class="panel" data-part="s-selling"></div>
     </section>
+    <section class="panel share-card" data-part="s-share"></section>
   </div>
   <div class="view" data-view="s-earn">
     <section class="grid g-main">
@@ -603,7 +633,9 @@ function sellerParts() {
     </div>
     <button class="btn btn-green" type="button" data-act="withdraw" style="margin-top:12px;width:100%" ${canWithdraw && ui.busy !== 'withdraw' ? '' : 'disabled'}>${ui.busy === 'withdraw' ? 'Confirm in your wallet…' : 'Withdraw earnings'}</button>
     <p class="note">${isMe ? 'Connected as the seller account.' : `Withdraw sends the transaction from your wallet: connect the seller account <b>${short(ACCOUNTS.seller.address)}</b>.`}</p>`);
-  patch('s-trades', `<div class="ph"><h2>Your trades</h2><small>latest ${Math.min(6, mine.length)}</small></div>${tradesTable(mine.slice(0, 6), 'seller')}`);
+  patch('s-trades', `<div class="ph"><h2>Your trades</h2><small>latest ${Math.min(6, mine.length)} · click a trade for its receipt</small></div>${tradesTable(mine.slice(0, 6), 'seller')}`);
+  drawerParts(mine);
+  patch('s-share', shareCardHTML(s));
 
   patch('s-solar', `<div class="ph"><h2>Solar right now</h2><small>Simulated meter</small></div>
     <div class="rows">
@@ -683,6 +715,9 @@ function opsSkeleton() {
   <div class="view" data-view="o-oracle">
     <section class="panel"><div class="ph"><h2>Dual-meter oracle</h2><small data-part="o-oracle-sub"></small></div><div data-part="o-oracle"></div></section>
   </div>
+  <div class="view" data-view="o-reports">
+    <section data-part="o-reports"></section>
+  </div>
   <div class="view" data-view="o-momo">
     <section class="panel" data-part="o-momo"></section>
   </div>
@@ -726,7 +761,7 @@ function opsParts() {
   patch('o-oracle-sub', `tolerance ${pct(T?.toleranceBps ?? 300)} · ${list.length} trades · click a trade for its receipt`);
   const isOwner = same(state.wallet?.address, T?.owner);
   patch('o-oracle', !list.length ? (state.historyLoaded ? '<p class="empty">No trades yet.</p>' : '<p class="empty">Loading trades from the contract…</p>') :
-    `<div class="tbl-wrap"><table><thead><tr><th>Trade</th><th>Opened</th><th class="num">Order (Wh)</th><th class="num">Seller (Wh)</th><th class="num">Buyer (Wh)</th><th class="num">Gap</th><th>Result</th><th>Tx</th><th>Action</th><th><span class="sr-only">Receipt</span></th></tr></thead><tbody>
+    `<div class="tbl-wrap"><table><thead><tr><th>Trade</th><th>Opened</th><th>Buyer</th><th class="num">Order (Wh)</th><th class="num">Seller (Wh)</th><th class="num">Buyer (Wh)</th><th class="num">Gap</th><th>Result</th><th>Tx</th><th>Action</th><th><span class="sr-only">Receipt</span></th></tr></thead><tbody>
     ${oracle.map((t) => {
       const { sellerWh, buyerWh } = readingsOf(t);
       const gap = sellerWh != null && buyerWh != null ? gapPct(sellerWh, buyerWh) : null;
@@ -737,6 +772,7 @@ function opsParts() {
         : `<span class="muted" style="font-size:12.5px">owner resolves</span>`;
       else if (t.status === 'Open' && expired) action = `<button class="btn btn-line btn-sm" type="button" data-act="refund" data-id="${t.id}">Refund buyer</button>`;
       return `<tr class="${t.status === 'Disputed' ? 'flag' : ''} rc-link" data-act="receipt" data-id="${t.id}" tabindex="0" title="Open the receipt of trade #${t.id}"><td data-label="Trade" class="mono">#${t.id}</td><td data-label="Opened">${clock(t.openTime)}</td>
+        <td data-label="Buyer">${userCell(ownerOf(t.id))}</td>
         <td data-label="Order (Wh)" class="num">${backendTrade(t.id)?.targetWh ?? '–'}</td>
         <td data-label="Seller (Wh)" class="num">${fmtWh(sellerWh)}</td><td data-label="Buyer (Wh)" class="num">${fmtWh(buyerWh)}</td>
         <td data-label="Gap" class="num" style="color:${gap != null && gap > (T?.toleranceBps ?? 300) / 100 ? 'var(--alert)' : 'inherit'}">${gap == null ? '–' : gap.toFixed(1) + '%'}</td>
@@ -760,10 +796,9 @@ function opsParts() {
   if (state.wallet && !accts.some(([, a]) => same(a, state.wallet.address))) accts.push(['Your wallet', state.wallet.address]);
   const ledger = list.flatMap((t) => momoForTrade(t, shareBps()).filter((r) => r.status !== 'PENDING'));
   const tot = (k, st) => ledger.filter((r) => r.kind === k && (!st || r.status === st)).reduce((a, r) => a + (r.amount || 0), 0);
-  // receipt drawer (opened from an Oracle row): the trade picked, else the newest one
-  const rcTrade = list.find((t) => t.id === ui.receiptId) || list[0];
-  patch('o-rc-head', receiptNav(list, rcTrade?.id));
-  patch('o-receipt', tradeReceiptHTML(rcTrade, rcTrade ? readingsOf(rcTrade) : {}, { shares: shareBps(), tolPct: (T?.toleranceBps ?? 300) / 100, lossPct: 2, txUrl, clock, backend: rcTrade ? backendTrade(rcTrade.id) : null }));
+  // receipt drawer (opened from an Oracle or Reports row): the trade picked, else the newest one
+  drawerParts(list);
+  patch('o-reports', reportsHTML(list));
 
   patch('o-momo', `<div class="ph"><h2>Mobile money ledger</h2><span class="pill sim">Simulated MoMo</span></div>
     <div class="kpis" style="margin-bottom:12px">
@@ -815,6 +850,194 @@ function chartSVG() {
     <circle cx="${x(last.t)}" cy="${y(last.exportW)}" r="4" fill="#16A34A"/><circle cx="${x(last.t)}" cy="${y(last.importW)}" r="3.5" fill="#2563EB"/></svg>`;
 }
 
+
+// ------------------------------------------------------------------ receipts drawer (every view)
+/** Fill the receipt drawer from the trades this view may open: the user's own (buyer), the battery's (seller), all (operator). */
+function drawerParts(list) {
+  const rc = list.find((t) => t.id === ui.receiptId) || list[0];
+  patch('o-rc-head', receiptNav(list, rc?.id));
+  patch('o-receipt', rc
+    ? tradeReceiptHTML(rc, readingsOf(rc), { shares: shareBps(), tolPct: (state.totals?.toleranceBps ?? 300) / 100, lossPct: 2, txUrl, clock, backend: backendTrade(rc.id) })
+    : '<p class="empty">No receipts yet.</p>');
+}
+const userCell = (u) => (u ? `<span class="who"><b>${esc(u.name || 'User')}</b><small class="mono">${esc(u.phone || short(u.id))}</small></span>` : '<span class="muted">–</span>');
+
+// ------------------------------------------------------------------ seller: emergency backup (the owner's choice)
+function shareCardHTML(s) {
+  const on = Boolean(s?.backupAllowed);
+  const outage = s?.grid === 'OUTAGE';
+  return `<div class="share-in">
+    <span class="share-ic" aria-hidden="true">${svgI('<rect x="3" y="7" width="16" height="10" rx="2"/><path d="M22 11v2M11 9l-2 3h4l-2 3"/>')}</span>
+    <div class="share-t"><h2>Emergency backup for the community</h2>
+      <p>During load shedding, let your battery also power the street's shared loads (city hall, street lights) on top of the shop you sell to. Your battery always keeps its ${s?.minSocPct ?? 5}% reserve. This is your choice as the owner: only you can switch it.</p>
+      <small>${!s ? 'Waiting for your meter…' : on ? (outage ? `On · the community is drawing ${watts(s.dischargeLocalW)} from your battery` : 'On · it starts when the grid goes down') : 'Off · your battery serves the shop only'}</small></div>
+    <button class="share-sw" type="button" role="switch" aria-checked="${on}" data-act="t-backup" ${s ? '' : 'disabled'} aria-label="Emergency backup for the community"><span aria-hidden="true"></span></button>
+  </div>`;
+}
+
+// ------------------------------------------------------------------ operator: tamper reports
+/** Why a trade looks like cheating or a faulty meter, or null. */
+function flagOf(t) {
+  const bt = backendTrade(t.id);
+  const { sellerWh, buyerWh } = readingsOf(t);
+  const gap = sellerWh != null && buyerWh != null ? gapPct(sellerWh, buyerWh) : null;
+  const tol = (state.totals?.toleranceBps ?? 300) / 100;
+  const tamper = bt?.finals?.buyer?.tamper === true;
+  if (!tamper && t.status !== 'Disputed' && !(gap != null && gap > tol)) return null;
+  return {
+    gap,
+    why: tamper ? 'Tamper switch on in METER_B' : t.status === 'Disputed' ? 'Disputed on-chain' : 'Readings disagree',
+    outcome: t.status === 'Disputed' ? 'Deposit frozen' : bt?.status === 'REJECTED' ? 'Rejected' : resultOf(t)[1],
+  };
+}
+
+function reportsHTML(list) {
+  const flagged = list.map((t) => ({ t, f: flagOf(t), u: ownerOf(t.id) })).filter((x) => x.f);
+  const groups = new Map();
+  flagged.forEach((x) => { const k = x.u?.id || ''; if (!groups.has(k)) groups.set(k, { u: x.u, items: [] }); groups.get(k).items.push(x); });
+  const warningsOf = (k) => state.notices[k]?.warnings || [];
+  const warnedUsers = [...groups.keys()].filter((k) => k && warningsOf(k).length).length;
+  const kpis = `<div class="bento rep-kpis">
+    ${kpiCard('rose', 'shield', 'Flagged trades', String(flagged.length), 'readings beyond the 3% tolerance')}
+    ${kpiCard('sun', 'home', 'Users involved', String([...groups.keys()].filter(Boolean).length), groups.has('') ? 'plus trades with no user' : 'with a dashboard account')}
+    ${kpiCard('violet', 'info', 'Warnings sent', String([...groups.keys()].reduce((a, k) => a + (k ? warningsOf(k).length : 0), 0)), `${warnedUsers} user${warnedUsers === 1 ? '' : 's'} warned`)}</div>`;
+  if (!flagged.length) return `${kpis}<section class="panel"><div class="ph"><h2>Tamper reports</h2></div><p class="empty">No suspicious trades. Every pair of meter readings agreed within the tolerance.</p></section>`;
+  const users = [...groups.entries()].sort((a, b) => b[1].items.length - a[1].items.length).map(([k, g]) => {
+    const w = k ? warningsOf(k) : [];
+    const worst = Math.max(...g.items.map((x) => x.f.gap ?? 0));
+    const lastW = w[w.length - 1];
+    const form = ui.warnFor === k && k ? `<form class="warn-form" data-form="warn" data-user="${esc(k)}">
+        <label for="warn-msg">Message to ${esc(g.u?.name || 'the user')}</label>
+        <textarea id="warn-msg" name="msg" rows="3">Our oracle found that your shop meter and the seller's meter disagree on trade${g.items.length > 1 ? 's' : ''} ${g.items.map((x) => `#${x.t.id}`).join(', ')} (gap up to ${worst.toFixed(0)}%). Please have your meter checked. Repeated mismatches can suspend your account.</textarea>
+        <div class="warn-actions"><button class="btn btn-line btn-sm" type="button" data-act="warn-cancel">Cancel</button><button class="btn btn-dark btn-sm" type="submit">Send warning</button></div></form>` : '';
+    return `<article class="rep-user ${w.length ? 'warned' : ''}">
+      <div class="rep-head">
+        <span class="acct-av">${esc(initials(g.u?.name || '?'))}</span>
+        <div class="rep-who"><b>${esc(g.u?.name || 'No user')}</b><small class="mono">${k ? esc(g.u?.phone || short(k)) : 'Wokwi button or older trades'}</small></div>
+        <span class="pill ${w.length ? 'bad' : g.items.length > 1 ? 'warn' : 'idle'}">${w.length ? `Suspicious · warned ${w.length}×` : g.items.length > 1 ? 'Repeated mismatch' : 'One mismatch'}</span>
+      </div>
+      <div class="rep-trades">${g.items.map((x) => `<button type="button" class="rep-t" data-act="receipt" data-id="${x.t.id}" title="Open the receipt of trade #${x.t.id}"><b class="mono">#${x.t.id}</b><span>${esc(x.f.why)}</span><em class="mono">${x.f.gap == null ? '–' : `${x.f.gap.toFixed(1)}%`}</em><small>${esc(x.f.outcome)} · ${clock(x.t.openTime)}</small></button>`).join('')}</div>
+      ${lastW ? `<p class="rep-last">Last warning ${new Date(lastW.at).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}: “${esc(lastW.message)}”</p>` : ''}
+      ${k ? (form || `<button class="btn ${w.length ? 'btn-line' : 'btn-dark'} btn-sm" type="button" data-act="warn-open" data-user="${esc(k)}">${w.length ? 'Warn again' : 'Mark suspicious and warn'}</button>`) : '<p class="note" style="margin:0">No account is linked to these trades, so there is nobody to warn.</p>'}
+    </article>`;
+  }).join('');
+  return `${kpis}<section class="panel"><div class="ph"><h2>Tamper reports</h2><small>Trades where the two meters disagree beyond ${pct(state.totals?.toleranceBps ?? 300)}, grouped by the user who ordered them</small></div>
+    <div class="rep-list">${users}</div>
+    <p class="note">A warning reaches the user's bell in their dashboard. PROTOTYPE: warnings travel as retained MQTT messages on the public broker; production sends them from the backend to an authenticated account.</p></section>`;
+}
+
+// ------------------------------------------------------------------ notifications (users): bell + pop-up
+const NOTES_KEY = `aegis.notes.${me || 'none'}`;
+let notes = (() => { try { return JSON.parse(localStorage.getItem(NOTES_KEY) || '[]'); } catch { return []; } })();
+const popQueue = [];
+const saveNotes = () => { try { localStorage.setItem(NOTES_KEY, JSON.stringify(notes.slice(0, 60))); } catch { /* private mode */ } };
+
+/** A notification for a finished trade of this user, or null while it is still running. */
+function tradeNote(t) {
+  const bt = backendTrade(t.id);
+  const { sellerWh, buyerWh } = readingsOf(t);
+  const gap = sellerWh != null && buyerWh != null ? gapPct(sellerWh, buyerWh) : null;
+  const tol = (state.totals?.toleranceBps ?? 300) / 100;
+  const gapTxt = gap == null ? '' : ` by ${gap.toFixed(1)}% (limit ${tol}%)`;
+  if (t.status === 'Disputed') return ['bad', `Trade #${t.id} disputed`, `Your meter and the seller's meter disagree${gapTxt}. The contract froze your deposit until the operator reviews it.`];
+  if (t.status === 'Settled') return ['ok', `Trade #${t.id} paid`, `You received ${fmtWh(t.deliveredWh)} Wh = ${realText(t.deliveredWh)} for ${fiat(whToFiat(t.deliveredWh))}. The receipt is ready.`];
+  if (t.status === 'Refunded') return ['idle', `Trade #${t.id} refunded`, 'No energy was billed. Your deposit is back.'];
+  if (bt?.status === 'REJECTED' || bt?.status === 'FAILED') return ['bad', `Trade #${t.id} rejected`, gap != null && gap > tol ? `Your meter and the seller's meter disagree${gapTxt}, so nothing was paid. Your deposit comes back when the trade expires.` : `${bt.reason || 'The evidence failed a check'}. Nothing was paid; your deposit comes back when the trade expires.`];
+  if (bt?.status === 'SIMULATION_VERIFIED') return ['ok', `Trade #${t.id} verified`, `Both meters agree${gapTxt}. Simulation only: nothing was charged and your deposit comes back when the trade expires.`];
+  return null;
+}
+
+function syncNotes() {
+  if (isOperator || !me) return;
+  let changed = false;
+  const add = (n, pop) => {
+    if (notes.some((x) => x.key === n.key)) return;
+    notes.unshift(n); changed = true;
+    if (pop) popQueue.push(n);
+  };
+  myTrades('buyer').forEach((t) => {
+    const n = tradeNote(t);
+    if (!n) return;
+    const bt = backendTrade(t.id);
+    const at = bt?.updatedAt || (t.settleTime || t.refundTime || t.openTime || 0) * 1000;
+    const fresh = at > pageLoadedAt - 20000;
+    add({ key: `t${t.id}`, tone: n[0], title: n[1], body: n[2], tradeId: t.id, at: at || Date.now(), read: !fresh }, fresh && n[0] === 'bad');
+  });
+  (state.notices[me]?.warnings || []).forEach((w) => add({ key: `w${w.id}`, tone: 'warn', title: 'Warning from the operator', body: w.message, tradeId: w.tradeIds?.[0] ?? null, at: w.at, read: false, warning: true }, true));
+  if (changed) { notes.sort((a, b) => b.at - a.at); saveNotes(); renderBell(); }
+  showNextPop();
+}
+
+const bellBtn = $('bellBtn'), bellMenu = $('bellMenu'), notePop = $('notePop');
+const BELL_ICON = '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>';
+const NOTE_ICON = { ok: KI.check, bad: '<circle cx="12" cy="12" r="9"/><path d="m15 9-6 6M9 9l6 6"/>', warn: KI.shield, idle: KI.info };
+const ago = (at) => { const m = Math.round((Date.now() - at) / 60000); return m < 1 ? 'just now' : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : new Date(at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }); };
+
+function renderBell() {
+  if (!bellBtn) return;
+  bellBtn.hidden = isOperator;
+  const unread = notes.filter((n) => !n.read).length;
+  bellBtn.innerHTML = `${svgI(BELL_ICON)}${unread ? `<span class="bell-n">${unread > 9 ? '9+' : unread}</span>` : ''}`;
+  bellBtn.setAttribute('aria-label', unread ? `Notifications, ${unread} unread` : 'Notifications');
+  bellBtn.classList.toggle('has', unread > 0);
+  if (bellMenu.hidden) return;
+  bellMenu.innerHTML = `<div class="bm-h"><b>Notifications</b>${unread ? '<button type="button" data-note="all">Mark all read</button>' : ''}</div>
+    ${notes.length ? `<div class="bm-list">${notes.slice(0, 20).map((n) => `<button type="button" class="bm-item ${n.tone} ${n.read ? '' : 'unread'}" data-note="${esc(n.key)}">
+      <i class="bm-ic" aria-hidden="true">${svgI(NOTE_ICON[n.tone] || KI.info)}</i>
+      <span><b>${esc(n.title)}</b><small>${esc(n.body)}</small><em>${ago(n.at)}${n.tradeId ? ' · view receipt' : ''}</em></span></button>`).join('')}</div>`
+    : '<p class="bm-empty">No notifications yet. Trade results and messages from the operator appear here.</p>'}`;
+}
+function toggleBell(open = bellMenu.hidden) {
+  bellMenu.hidden = !open;
+  bellBtn.setAttribute('aria-expanded', String(open));
+  if (open) renderBell();
+}
+function openNote(n) {
+  if (!n) return;
+  if (!n.read) { n.read = true; saveNotes(); }
+  renderBell();
+  if (n.tradeId && state.trades[n.tradeId]) {
+    if (viewKey() !== 'buyer') { ui.persona = 'ama'; ui.mode = 'buyer'; save(); render(); }
+    ui.receiptId = n.tradeId; render(); receipts.open();
+  }
+}
+function showNextPop() {
+  if (!notePop || !notePop.hidden || !popQueue.length) return;
+  const n = popQueue.shift();
+  notePop.className = `note-pop ${n.tone}`;
+  notePop.innerHTML = `<div class="np-card" role="alertdialog" aria-modal="true" aria-labelledby="np-t" aria-describedby="np-b">
+    <i class="np-ic" aria-hidden="true">${svgI(NOTE_ICON[n.tone] || KI.info)}</i>
+    <h2 id="np-t">${esc(n.title)}</h2><p id="np-b">${esc(n.body)}</p>
+    ${n.warning ? '<p class="np-fine">You can read this again from the bell in the top bar.</p>' : ''}
+    <div class="np-actions">${n.tradeId && state.trades[n.tradeId] ? `<button class="btn btn-line" type="button" data-np="view">View receipt</button>` : ''}<button class="btn btn-dark" type="button" data-np="ok">OK</button></div></div>`;
+  notePop.hidden = false;
+  notePop.dataset.key = n.key;
+  notePop.querySelector('[data-np="ok"]').focus();
+}
+if (bellBtn) {
+  bellBtn.addEventListener('click', (e) => { e.stopPropagation(); toggleBell(); });
+  bellMenu.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-note]');
+    if (!b) return;
+    e.stopPropagation();
+    if (b.dataset.note === 'all') { notes.forEach((n) => { n.read = true; }); saveNotes(); return renderBell(); }
+    toggleBell(false);
+    return openNote(notes.find((n) => n.key === b.dataset.note));
+  });
+  document.addEventListener('click', (e) => { if (!bellMenu.hidden && !bellMenu.contains(e.target)) toggleBell(false); });
+  addEventListener('keydown', (e) => { if (e.key === 'Escape' && !bellMenu.hidden) { toggleBell(false); bellBtn.focus(); } });
+  notePop.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-np]');
+    if (!b && e.target !== notePop) return;
+    const n = notes.find((x) => x.key === notePop.dataset.key);
+    notePop.hidden = true;
+    if (n) { n.read = true; saveNotes(); renderBell(); }
+    if (b?.dataset.np === 'view') openNote(n);
+    setTimeout(showNextPop, 250);
+  });
+  renderBell();
+}
+
 // ------------------------------------------------------------------ actions
 main.addEventListener('click', async (e) => {
   const btn = e.target.closest('[data-act]');
@@ -825,7 +1048,7 @@ main.addEventListener('click', async (e) => {
   const sim = (patchObj, msg) => { if (simControl(patchObj)) { if (msg) toast(msg); } else toast('Not connected to MQTT yet.'); };
   switch (act) {
     case 'outage-on': return sim({ outage: true }, 'Load shedding started (mock meters).');
-    case 'request-on': return sim({ requesting: true, targetWh: orderWh() }, `Request for ${orderWh()} Wh sent. The bridge opens a trade on-chain.`);
+    case 'request-on': ui.requested = true; return sim({ requesting: true, targetWh: orderWh() }, `Request for ${orderWh()} Wh sent. The bridge opens a trade on-chain.`);
     case 'pay-open': ui.momo = 'confirm'; return render();
     case 'pay-cancel': ui.momo = null; return render();
     case 'pay-send': ui.momo = 'prompt'; return render();
@@ -834,6 +1057,7 @@ main.addEventListener('click', async (e) => {
       ui.momo = 'processing'; render();
       setTimeout(() => {
         ui.momo = null;
+        ui.requested = true;
         if (simControl({ requesting: true, targetWh: orderWh() })) toast(`MoMo deposit of ${fiat(depositFiat(orderMaxWh()))} received (simulated). Opening the trade for ${orderWh()} Wh…`);
         else toast('Payment confirmed, but MQTT is offline: the request could not be sent.');
         render();
@@ -855,6 +1079,8 @@ main.addEventListener('click', async (e) => {
     case 'engine-wokwi': chooseEngine('wokwi'); syncEngineSwitch(document.querySelectorAll('[data-engine]')); return sim({ engine: 'wokwi' }, 'Mock paused. Waiting for telemetry from the real Wokwi…');
     case 'go-control': return go('o-grid');
     case 'receipt': ui.receiptId = Number(btn.dataset.id); render(); return receipts.open();
+    case 'warn-open': ui.warnFor = btn.dataset.user; parts.delete('o-reports'); render(); return main.querySelector('#warn-msg')?.focus();
+    case 'warn-cancel': ui.warnFor = null; return render();
     case 'load-up': return sim({ shopLoadW: Math.min(600, Number(b?.loadW ?? 300) + 50) });
     case 'load-down': return sim({ shopLoadW: Math.max(0, Number(b?.loadW ?? 300) - 50) });
     case 'as-ama': ui.persona = 'ama'; ui.mode = 'buyer'; save(); return render();
@@ -896,6 +1122,15 @@ main.addEventListener('submit', (e) => {
     const addr = f.meter.value.trim();
     if (!isAddress(addr)) return toast('Enter a valid 0x address for the meter signing key.');
     walletAction('register', () => tx.registerMeter(addr), 'Meter registered on-chain.');
+  } else if (f.dataset.form === 'warn') {
+    const key = f.dataset.user, msg = f.msg.value.trim();
+    if (!msg) return toast('Write a short message for the user.');
+    const prev = state.notices[key]?.warnings || [];
+    const tradeIds = tradeList().filter((t) => ownerOf(t.id)?.id === key && flagOf(t)).map((t) => t.id);
+    const ok = publishNotice(key, { warnings: [...prev, { id: `${Date.now().toString(36)}`, at: Date.now(), message: msg.slice(0, 400), tradeIds, by: 'operator' }].slice(-10) });
+    ui.warnFor = null;
+    toast(ok ? 'Warning sent. The user sees it under the bell in their dashboard.' : 'Not connected to MQTT yet: the warning was not sent.');
+    render();
   } else if (f.dataset.form === 'resolve') {
     const v = f.wh.value.trim();
     if (!/^\d+$/.test(v)) return toast('Enter the accepted energy as a whole number of Wh (0 refunds the buyer).');
@@ -933,9 +1168,9 @@ function renderAccount() {
   let wallet = '';
   if (s.method === 'wallet') {
     const on = state.wallet && same(state.wallet.address, s.address);
-    wallet = `<div class="am-wallet"><span>Signed in with ${esc(s.walletName || 'a browser wallet')}</span><b class="mono">${esc(short(s.address))}</b><small>${on ? 'Connected' : 'Not connected right now: use Connect wallet'}</small></div>`;
+    wallet = `<div class="am-wallet"><span class="amw-h">${WALLET_ICON}Signed in with ${esc(s.walletName || 'a browser wallet')}</span><b class="mono">${esc(short(s.address))}</b><small>${on ? 'Connected' : 'Not connected right now: use Connect wallet'}</small></div>`;
   } else if (s.address) {
-    wallet = `<div class="am-wallet"><span>Your Aegis wallet</span><b class="mono">${esc(short(s.address))}</b>
+    wallet = `<div class="am-wallet"><span class="amw-h">${WALLET_ICON}Your Aegis wallet<em>Base Sepolia</em></span><b class="mono">${esc(short(s.address))}</b>
       <small>${s.method === 'momo' ? 'Linked to your MoMo number (simulated)' : 'Locked with your password, stored in this browser (prototype)'}</small>
       <div class="am-links"><button type="button" data-am="copy">Copy address</button><a href="${addrUrl(s.address)}" target="_blank" rel="noopener">View on explorer</a></div></div>`;
   }

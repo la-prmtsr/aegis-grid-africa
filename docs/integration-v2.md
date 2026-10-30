@@ -75,8 +75,9 @@ All topics start with `aegis-grid/ag-sakarya26/`.
 | `meter/METER_A/cmd`, `meter/METER_B/cmd` | relayer → gateways | `start` / `stop` (gateway evidence), `sign` (Stage 5B, testnet only) |
 | `trade/<id>/reading/seller` and `/buyer` | meters → relayer, dashboard | signed final readings, retained |
 | `backend/status` | relayer → dashboard | retained: active trade, approvals, last result, notices |
-| `app/request` | dashboard → relayer | `{ "requesting": true \| false }` |
-| `app/demo` | dashboard → relayer, Meter B, mock | `outage`, `backup`, `tamper`, `pvW`, `communityLoadW`, `engine` (mock only) |
+| `app/request` | dashboard → relayer | `{ "requesting": true, "targetWh": 20, "user": { "id", "name", "phone" } }` or `{ "requesting": false }`. `user` = the signed-in account (wallet address, first name, masked phone); the relayer stores it with the trade (`backend/status` `trades[].user`, `active.user`) so each user sees only their own receipts |
+| `app/notice/<user id>` | operator dashboard → that user | retained `{ "warnings": [{ "id", "at", "message", "tradeIds" }] }`: warnings from **Operator → Reports**, shown under the user's bell |
+| `app/demo` | dashboard → relayer, Meter B, mock | `outage`, `backup` (sent from the **Seller** page: the battery owner's choice), `tamper`, `pvW`, `communityLoadW`, `engine` (mock only) |
 
 ## How the energy is counted (`AEGIS_EVIDENCE=gateway`, older Stage 4E firmware)
 

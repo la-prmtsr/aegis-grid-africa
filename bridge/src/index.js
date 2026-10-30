@@ -112,4 +112,4 @@ async function onFinalReading(msg) {
     await new Promise((res) => setTimeout(res, 1000));
   }
   log(`trade ${trade.id}: the RPC node has not caught up yet; check the explorer link above`);
-}
+} 

@@ -86,6 +86,14 @@ Phone numbers take a country code (Ghana first, then Africa A–Z, then other co
 
 **Operator credentials** are shared inside the team only and are not written in this repository. The page stores only a SHA-256 hash of `username:password` (default in `src/lib/config.js`); to change them, run `npm run operator-hash -- <username> <password>` and put the output in `web/.env.local` (and in Vercel) as `VITE_OPERATOR_HASH`. This is a front-end gate for the demo, not real security: the check runs in the browser, so a production version moves operator login to a server.
 
+**Per-user data.** Every Get power request carries the signed-in user (`app/request` `user`: wallet address, first name, masked phone), and the backend stores it with the trade. The Buyer pages (Receipts, Last receipt, Impact, MoMo refunds) show only that user's trades; while another user's trade runs, Get power shows *Battery busy*. Trades opened before this change or from the Wokwi button have no user and appear only to the operator. Receipts rows open the full dual-meter receipt.
+
+**Notifications.** The bell in the top bar lists the user's trade results (paid, verified, rejected, disputed) and warnings from the operator; a rejected or disputed trade and every new warning also open a pop-up. Read state is kept in this browser.
+
+**Operator → Reports.** Trades whose two meter readings disagree beyond the tolerance (or where METER_B reports its tamper switch), grouped by user, with a *Mark suspicious and warn* message that goes to that user's bell (`app/notice/<user id>`, retained). PROTOTYPE: anyone on the public broker could publish there; production sends warnings from the backend to an authenticated account.
+
+**Emergency backup** is on the Seller page (*Emergency backup for the community*): it is the battery owner's decision. The switch sends `app/demo {"backup":…}`, the backend forwards it to Wokwi (`demo/control/emergency_backup`), and Unity and the operator's Control room follow the telemetry (the operator tile is read-only).
+
 After signing in, the person picks **I need power** (buyer view) or **I have a battery to share** (seller view) and can switch any time. The account menu (top right) shows the Aegis wallet and **Log out**.
 
 Prototype limits: accounts live in this browser's storage only (no server), a forgotten password cannot be reset, and the MoMo wallet is shown by address only. Production path: a backend or embedded-wallet service creates and protects the wallets, and MoMo sign in checks the number with the MTN MoMo API before sending a real code.
