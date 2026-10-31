@@ -8,7 +8,7 @@ let shuttingDown = false;
 
 const backend = spawn(
   process.execPath,
-  ['src/v2/run.js', '--mock'],
+  ['src/v2/run.js', '--mock', '--monitor'],
   {
     cwd: process.cwd(),
     env: process.env,
