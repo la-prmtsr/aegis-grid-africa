@@ -117,13 +117,24 @@ input::placeholder{color:#A6B2C2}
 /* account created */
 .done-ico{width:52px;height:52px;border-radius:50%;background:var(--green-soft);color:var(--green);display:grid;place-items:center;margin-bottom:14px}
 .done-ico svg{width:26px;height:26px}
-.wallet-card{border-radius:16px;padding:16px;background:linear-gradient(135deg,#0E1B2C,#1E3A5F);color:#fff;display:grid;gap:8px;margin-bottom:12px}
-.wc-top{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:13px;color:#C7D2E0}
-.wallet-card .pill{font:500 11px/1 var(--f-mono);background:rgba(255,255,255,.12);border-radius:999px;padding:6px 8px;color:#E2E8F0}
-.wc-addr{font-size:22px;letter-spacing:.02em;margin:2px 0 6px}
-.wc-row{display:flex;justify-content:space-between;font-size:13.5px;color:#C7D2E0}
-.wc-row b{color:#fff;font-weight:600}
-.wallet-card .link{color:#93C5FD;justify-self:start;font-size:13px}
+/* Aegis wallet card: the same glass card as the account menu in the console */
+.wallet-card{position:relative;overflow:hidden;isolation:isolate;color:var(--ink);border-radius:18px;padding:16px;display:grid;gap:4px;margin-bottom:12px;
+  background:linear-gradient(135deg,rgba(22,163,74,.13),rgba(37,99,235,.10) 60%,rgba(245,158,11,.10));border:1px solid rgba(255,255,255,.85);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.9),0 12px 28px -20px rgba(14,27,44,.5);backdrop-filter:blur(14px) saturate(1.3);-webkit-backdrop-filter:blur(14px) saturate(1.3)}
+.wallet-card::before{content:"";position:absolute;z-index:-1;width:150px;height:150px;right:-40px;top:-60px;border-radius:50%;background:radial-gradient(circle,rgba(22,163,74,.3),transparent 70%)}
+.wallet-card::after{content:"";position:absolute;z-index:-1;width:140px;height:140px;left:-50px;bottom:-70px;border-radius:50%;background:radial-gradient(circle,rgba(37,99,235,.22),transparent 70%)}
+.wc-top{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.wc-h{display:inline-flex;align-items:center;gap:8px;font:600 13px/1.2 var(--f-display);color:#5A6B80}
+.wc-h svg{width:18px;height:18px;color:#16A34A}
+.wc-net{font:500 11px/1 var(--f-mono);letter-spacing:.04em;color:#0B5D3B;background:rgba(255,255,255,.75);border:1px solid rgba(22,163,74,.28);border-radius:999px;padding:5px 9px}
+.wc-addr{font-size:22px;font-weight:600;letter-spacing:.01em;margin:6px 0 0}
+.wc-sub{font-size:12.5px;color:#5A6B80}
+.wc-rows{display:grid;gap:6px;margin-top:10px;padding-top:10px;border-top:1px solid rgba(14,27,44,.08)}
+.wc-row{display:flex;justify-content:space-between;font-size:13.5px;color:#5A6B80}
+.wc-row b{color:var(--ink);font-weight:600}
+.wc-links{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.wc-links button,.wc-links a{background:rgba(255,255,255,.8);border:1px solid rgba(14,27,44,.08);border-radius:999px;padding:7px 12px;color:var(--ink);font:600 12.5px var(--f-display);cursor:pointer;text-decoration:none}
+.wc-links button:hover,.wc-links a:hover{background:#fff}
 .fine{color:var(--muted);font-size:13px;margin:0 0 18px}
 
 /* role choice */

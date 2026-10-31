@@ -2,7 +2,7 @@
 // Routes: #signup, #login, #created, #role (users) and #operator (operator team, demo account).
 // Accounts are kept in this browser (see lib/session.js).
 import { ethers } from 'ethers';
-import { ACCOUNTS, CHAIN, OPERATOR_HASH } from '../lib/config.js';
+import { ACCOUNTS, CHAIN, OPERATOR_HASH, addrUrl } from '../lib/config.js';
 import { esc, short } from '../lib/format.js';
 import {
   normalizePhone, splitPhone, maskPhone, findAccount, createAccount, checkPassword, momoAccount,
@@ -74,6 +74,7 @@ function signedInNote() {
 }
 
 // ------------------------------------------------------------------ views
+const WALLET_ICO = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 7V5a2 2 0 0 0-2-2H5a2 2 0 0 0 0 4h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5"/><circle cx="16.5" cy="13.5" r="1.5"/></svg>';
 const USER_ICO = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>';
 const OPS_ICO = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2 4 5v6c0 5.5 3.4 9.7 8 11 4.6-1.3 8-5.5 8-11V5l-8-3Z"/><path d="m9 12 2 2 4-4"/></svg>';
 /** Who is signing in: households and shops (sign up / log in), or the operator team (fixed demo account). */
@@ -131,11 +132,11 @@ function createdView() {
   <h1>Welcome, ${esc(firstName(s.name))}</h1>
   <p class="sub">Your account is ready, and so is your wallet.</p>
   <div class="wallet-card">
-    <div class="wc-top"><span>Your Aegis wallet</span><span class="pill">${s.method === 'momo' ? 'Linked to MoMo · simulated' : 'Locked with your password'}</span></div>
+    <div class="wc-top"><span class="wc-h">${WALLET_ICO}Your Aegis wallet</span><span class="wc-net">Base Sepolia</span></div>
     <div class="wc-addr mono" title="${esc(s.address)}">${esc(short(s.address))}</div>
-    <div class="wc-row"><span>Phone</span><b>${esc(maskPhone(s.phone))}</b></div>
-    <div class="wc-row"><span>Neighbourhood</span><b>${esc(s.area || '–')}</b></div>
-    <button type="button" class="link" data-act="copy" data-v="${esc(s.address)}">Copy address</button>
+    <div class="wc-rows"><div class="wc-row"><span>Phone</span><b>${esc(maskPhone(s.phone))}</b></div>
+    <div class="wc-row"><span>Neighbourhood</span><b>${esc(s.area || '–')}</b></div></div>
+    <div class="wc-links"><button type="button" data-act="copy" data-v="${esc(s.address)}">Copy address</button><a href="${addrUrl(s.address)}" target="_blank" rel="noopener">View on explorer</a></div>
   </div>
   <p class="fine">${s.method === 'momo'
     ? 'Payments go through your MoMo. The wallet keeps the record of every trade on Base.'

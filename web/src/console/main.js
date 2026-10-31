@@ -1018,7 +1018,8 @@ function buyerNotes(t) {
 function sellerNotes(t) {
   const bt = backendTrade(t.id);
   const { sellerWh } = readingsOf(t);
-  const g = gapInfo(t);
+  const g0 = gapInfo(t);
+  const g = { ...g0, txt: g0.txt.replace("the seller's meter", 'yours') };
   const out = [];
   if (bt?.suspect) out.push([`S-s${t.id}`, 'warn', `Trade #${t.id}: supply to the shop stopped`, `The shop's meter did not match yours while your battery was supplying it, so the supply was stopped to protect your battery. Payment is on hold while the operator checks the trade.`]);
   if (t.status === 'Settled' && !t.disputed && bt?.suspect) out.push([`S-t${t.id}`, 'ok', `Trade #${t.id} paid for the energy before the stop`, `The supply stopped early, but the shop's meter agreed with yours up to that point: the shop paid for ${fmtWh(t.deliveredWh)} Wh and your share is ${money(t.sellerShare)}.`]);
@@ -1050,7 +1051,8 @@ function syncNotes() {
     const fresh = at > pageLoadedAt - 20000;
     const n = { key, tone, title, body, tradeId, at: at || Date.now(), read: extra.warning ? false : !fresh, view, ...extra };
     notes.unshift(n); changed = true;
-    if (pop && (fresh || extra.warning)) popQueue.push(n);
+    // the buyer caused it: a pop-up in the middle; the seller and the operator are informed: a notification at the top right
+    if (pop && (fresh || extra.warning)) { if (view === 'buyer') popQueue.push(n); else noteToast(n); }
   };
   const atOf = (t) => backendTrade(t.id)?.updatedAt || (t.settleTime || t.refundTime || t.openTime || 0) * 1000;
   if (isOperator) {
@@ -1099,6 +1101,34 @@ function openNote(n) {
     else if (viewKey() !== want) { ui.persona = want === 'seller' ? 'kwame' : 'ama'; ui.mode = want; save(); render(); }
     ui.receiptId = n.tradeId; render(); receipts.open();
   }
+}
+/** Top-right notification (seller, operator): slides in, stays 9 s (paused while the pointer is on it), stacks up to 3. */
+const toastWrap = document.body.appendChild(Object.assign(document.createElement('div'), { className: 'nt-wrap', role: 'region' }));
+toastWrap.setAttribute('aria-label', 'Notifications');
+toastWrap.setAttribute('aria-live', 'polite');
+function noteToast(n) {
+  const el = document.createElement('div');
+  el.className = `nt ${n.tone}`;
+  const action = n.tradeId && state.trades[n.tradeId] ? `<button type="button" data-nt="view">${n.view === 'ops' ? 'Open receipt' : 'View receipt'}</button>` : '';
+  const reports = n.view === 'ops' ? '<button type="button" data-nt="reports">Open Reports</button>' : '';
+  el.innerHTML = `<i class="nt-ic" aria-hidden="true">${svgI(NOTE_ICON[n.tone] || KI.info)}</i>
+    <div class="nt-b"><b>${esc(n.title)}</b><p>${esc(n.body)}</p>${action || reports ? `<div class="nt-a">${reports}${action}</div>` : ''}</div>
+    <button type="button" class="nt-x" data-nt="close" aria-label="Dismiss">${svgI('<path d="M6 6l12 12M18 6 6 18"/>')}</button><span class="nt-bar" aria-hidden="true"></span>`;
+  let left = 9000, t0 = Date.now(), timer = null;
+  const close = () => { clearTimeout(timer); el.classList.add('out'); setTimeout(() => el.remove(), 250); };
+  const run = () => { t0 = Date.now(); timer = setTimeout(close, left); el.classList.remove('paused'); };
+  el.addEventListener('mouseenter', () => { clearTimeout(timer); left -= Date.now() - t0; el.classList.add('paused'); });
+  el.addEventListener('mouseleave', run);
+  el.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-nt]');
+    if (!b) return;
+    if (b.dataset.nt === 'view') openNote(n);
+    if (b.dataset.nt === 'reports') { if (viewKey() !== 'ops') { ui.persona = 'ops'; save(); render(); } go('o-reports'); if (!n.read) { n.read = true; saveNotes(); renderBell(); } }
+    close();
+  });
+  toastWrap.prepend(el);
+  [...toastWrap.children].slice(3).forEach((x) => x.remove());
+  run();
 }
 function showNextPop() {
   if (!notePop || !notePop.hidden || !popQueue.length) return;
@@ -1278,17 +1308,18 @@ function renderAccount() {
   $('acctAv').textContent = initials(session.name);
   $('acctName').textContent = session.name.split(' ')[0];
   const s = session;
-  const head = `<div class="am-head"><span class="acct-av big">${esc(initials(s.name))}</span><div><b>${esc(s.name)}</b><small>${esc(METHOD_LABEL[s.method] || '')}${s.phone ? ` · ${esc(maskPhone(s.phone))}` : ''}</small></div></div>`;
+  const head = `<div class="am-head"><span class="acct-av big">${esc(initials(s.name))}</span><div><b>${esc(s.name)}</b><small>${esc(METHOD_LABEL[s.method] || '')}</small></div></div>`;
   let wallet = '';
   if (s.method === 'wallet') {
     const on = state.wallet && same(state.wallet.address, s.address);
     wallet = `<div class="am-wallet"><span class="amw-h">${WALLET_ICON}Signed in with ${esc(s.walletName || 'a browser wallet')}</span><b class="mono">${esc(short(s.address))}</b><small>${on ? 'Connected' : 'Not connected right now: use Connect wallet'}</small></div>`;
   } else if (s.address) {
+    // the same card as the sign-up "Welcome" step (auth.html): address, phone, neighbourhood, copy / explorer
     wallet = `<div class="am-wallet"><span class="amw-h">${WALLET_ICON}Your Aegis wallet<em>Base Sepolia</em></span><b class="mono">${esc(short(s.address))}</b>
-      <small>${s.method === 'momo' ? 'Linked to your MoMo number (simulated)' : 'Locked with your password, stored in this browser (prototype)'}</small>
+      <div class="amw-rows">${s.phone ? `<div><span>Phone</span><b>${esc(maskPhone(s.phone))}</b></div>` : ''}${s.area ? `<div><span>Neighbourhood</span><b>${esc(s.area)}</b></div>` : ''}</div>
       <div class="am-links"><button type="button" data-am="copy">Copy address</button><a href="${addrUrl(s.address)}" target="_blank" rel="noopener">View on explorer</a></div></div>`;
   }
-  const area = s.area ? `<div class="am-row"><span>Neighbourhood</span><b>${esc(s.area)}</b></div>` : '';
+  const area = s.area && !(s.address && s.method !== 'wallet') ? `<div class="am-row"><span>Neighbourhood</span><b>${esc(s.area)}</b></div>` : '';
   const note = isOperator
     ? `<p class="am-note">Operator demo account: the whole street, the oracle, mobile money and the escrow. You can also look at the Buyer and Seller pages from the top bar.</p>`
     : `<p class="am-note">You are looking at the demo street: the buyer's shop (meter B) and the seller's battery (meter A). Switch between Buyer and Seller in the top bar. The operator console has its own sign-in.</p>
