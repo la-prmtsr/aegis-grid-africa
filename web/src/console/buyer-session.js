@@ -1,4 +1,4 @@
-// Buyer (UMKM B) request flow: order size (Stage 6), MoMo checkout, live session, closing and receipt.
+// Buyer (the shop) request flow: order size (Stage 6), MoMo checkout, live session, closing and receipt.
 // Pure render functions: main.js passes the data in, so the dashboard and the design preview use the
 // same markup. Order-size rules: lib/sizing.js (shared with the backend, checked by a test).
 import { orderSteps, DEFAULT_RATE } from '../lib/sizing.js';

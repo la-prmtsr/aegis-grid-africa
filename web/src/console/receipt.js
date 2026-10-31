@@ -145,7 +145,7 @@ export function receiptHTML(t, r, o) {
         <div class="rc-meters">
           <div class="rc-m"><span>METER_A · Seller</span><b class="mono">${whTxt(sent)}<small> Wh</small></b><em>Energy sent · Resident A</em></div>
           <div class="rc-arrow" aria-hidden="true"><svg viewBox="0 0 48 12"><path d="M0 6h44M38 1l6 5-6 5" fill="none" stroke="currentColor" stroke-width="1.6"/></svg><small class="mono">${lostWh == null ? '' : lostWh > 0 ? `−${whTxt(lostWh)} Wh` : '0 Wh'}</small></div>
-          <div class="rc-m"><span>METER_B · Buyer</span><b class="mono">${whTxt(got)}<small> Wh</small></b><em>Energy received · UMKM B</em></div>
+          <div class="rc-m"><span>METER_B · Buyer</span><b class="mono">${whTxt(got)}<small> Wh</small></b><em>Energy received · Shop</em></div>
         </div>
         <div class="rc-rows">
           <div><span>Difference</span><b class="mono ${gap == null ? '' : within ? 'pos' : 'neg'}">${gap == null ? '–' : `${gap.toFixed(1)}%`}</b></div>

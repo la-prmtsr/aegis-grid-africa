@@ -134,7 +134,7 @@ export function ctlToggles() {
   const none = !m;
   return `<div class="cr-label">Scenario</div><div class="cr-tiles">
     ${tile('t-outage', 'outage', 'Utility outage', m?.outage ? 'Islanded' : 'Off', !!m?.outage, 'red', none, 'Opens the PCC: the street runs on the battery only')}
-    ${tile('t-request', 'request', 'Buyer request', requesting ? (tradeId ? `Trade #${tradeId}` : 'Opening…') : 'Off', requesting, 'blue', none, 'UMKM B requests its order (Wh): the backend opens a trade on-chain and stops it at the order')}
+    ${tile('t-request', 'request', 'Buyer request', requesting ? (tradeId ? `Trade #${tradeId}` : 'Opening…') : 'Off', requesting, 'blue', none, 'The shop requests its order (Wh): the backend opens a trade on-chain and stops it at the order')}
     ${tile('t-backup', 'backup', 'Emergency backup', m?.backup ? 'On · seller' : 'Off · seller', !!m?.backup, 'green', true, 'The battery owner decides this on the Seller page (My battery): only Resident A can let the battery feed the community loads')}
     ${be?.controls?.tamper === false
       ? tile('t-tamper', 'tamper', 'Tamper Meter B', 'In Wokwi', false, 'amber', true, 'Not configured: add WOKWI_CTRL_TAMPER_TOPIC=meter_b_tamper, WOKWI_CTRL_TAMPER_ON=1 and WOKWI_CTRL_TAMPER_OFF=0 to .env and restart the backend. METER_B runs in Faras’s Wokwi; the backend never alters a meter value.')
@@ -162,7 +162,7 @@ export function metricsHTML() {
   <div class="cr-groups">
     ${group('Generation', `${row('PV generated', W(m.pv))}${row('Delivered to microgrid', W(m.delivered))}
       ${row('PV delivery', pctTxt(m.deliveryPct))}${bar(m.deliveryPct, 'amber', 'PV delivery')}`)}
-    ${group('Demand', `${row('Community load', W(m.community))}${row('Buyer request · UMKM B', W(m.buyer))}${row('Total demand', W(m.demand))}
+    ${group('Demand', `${row('Community load', W(m.community))}${row('Buyer request · Shop', W(m.buyer))}${row('Total demand', W(m.demand))}
       ${row('PV balance at community', `${m.balance >= 0 ? '+' : '−'}${Math.abs(Math.round(m.balance))} W`, m.balance >= 0 ? 'pos' : 'neg')}`)}
     ${group('Battery · Resident A', `<div class="cr-soc"><b class="mono">${m.soc.toFixed(1)}<small>%</small></b><span class="pill ${m.batteryState === 'CHARGING' ? 'ok' : m.batteryState === 'DISCHARGING' ? 'blue' : m.batteryState === 'AT RESERVE' ? 'bad' : 'idle'}">${m.batteryState}</span></div>
       ${bar(m.soc, 'green', 'Battery state of charge', m.reserve)}
@@ -172,7 +172,7 @@ export function metricsHTML() {
     ${group('Supply', `${row('Unserved', W(m.unserved), m.unserved > 0.5 ? 'neg' : '')}${row('Load served (total)', pctTxt(m.servedPct))}
       ${bar(m.servedPct, m.servedPct >= 99.5 ? 'green' : m.servedPct >= 60 ? 'amber' : 'alert', 'Load served')}`)}
     ${group('Telemetry', `${row('Source', m.source === 'mock' ? 'Mock' : 'Wokwi ESP32')}${row('Last message', age == null ? '–' : `${age}s ago`, age > 5 ? 'neg' : '')}
-      ${row('P2P to UMKM B', W(m.exportW))}${row('Active trade', m.tradeId ? `#${m.tradeId}${m.targetWh ? ` · ${m.liveWh != null ? m.liveWh.toFixed(1) : '0.0'} / ${m.targetWh} Wh` : ''}` : '–')}`)}
+      ${row('P2P to Shop', W(m.exportW))}${row('Active trade', m.tradeId ? `#${m.tradeId}${m.targetWh ? ` · ${m.liveWh != null ? m.liveWh.toFixed(1) : '0.0'} / ${m.targetWh} Wh` : ''}` : '–')}`)}
   </div>`;
 }
 

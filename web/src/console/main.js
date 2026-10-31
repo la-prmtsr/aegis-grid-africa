@@ -736,9 +736,9 @@ function opsParts() {
   patch('o-kpis', `
     ${energyCardHTML(T, list, im)}
     ${kpiCard('sky', 'swap', 'Trades', T ? String(T.nextTradeId - 1) : '–', `${settled.length} settled`)}
-    ${kpiCard('rose', 'shield', 'Disputes caught', String(disputed.length), `${list.filter((t) => t.status === 'Disputed').length} still frozen`)}
+    ${kpiCard('rose', 'shield', 'Frozen on-chain', String(disputed.length), `disputes caught by the contract · ${list.filter((t) => t.status === 'Disputed').length} still frozen`)}
     ${kpiCard('violet', 'coin', 'Paid for energy', money(sum('amount')), 'test ETH')}
-    ${kpiCard('sun', 'split', 'Utility + platform fees', money(sum('utilityShare') + sum('platformShare')), `${pct(T?.utilityBps)} + ${pct(T?.platformBps)}`)}`);
+    ${kpiCard('sun', 'split', 'Utility + platform fees', money(sum('utilityShare') + sum('platformShare')), `≈ ${fiat(settled.reduce((a, t) => a + whToFiat(t.deliveredWh || 0), 0) * ((T?.utilityBps ?? 1500) + (T?.platformBps ?? 200)) / 10000)} · utility ${pct(T?.utilityBps)} + Aegis ${pct(T?.platformBps)}`)}`);
 
   patch('o-chart', chartSVG());
 
