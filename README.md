@@ -19,7 +19,7 @@ Tech Hub Africa Hackathon 2026
 |---|---|
 | 🎬 Demo video | _add before submission_ |
 | 🌐 Live dashboard | _add before submission_ |
-| 🔌 Wokwi simulation | _add before submission_ |
+| 🔌 Wokwi Simulation |https://wokwi.com/projects/478292392307841025|
 | 📜 Contract v2 (Base Sepolia) | [`0x2736…fc6e`](https://base-sepolia.blockscout.com/address/0x273651238fe3e2279d2295edcbd005f31347fc6e) |
 | 🧾 On-chain evidence | [docs/evidence.md](docs/evidence.md) |
 
